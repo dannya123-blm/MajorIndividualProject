@@ -6,27 +6,25 @@ export default function Uploader() {
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState("");
   const [status, setStatus] = useState("");
-  const [savedPath, setSavedPath] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [skills, setSkills] = useState([]);
+  const [qualifications, setQualifications] = useState([]);
   const [preview, setPreview] = useState("");
+  const [savedPath, setSavedPath] = useState("");
 
   const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      setFileName(selectedFile.name);
+    const selected = e.target.files[0];
+    if (selected) {
+      setFile(selected);
+      setFileName(selected.name);
       setStatus("");
-      setSavedPath("");
-      setEmail("");
-      setPhone("");
       setSkills([]);
+      setQualifications([]);
       setPreview("");
+      setSavedPath("");
     }
   };
 
-  const handleUploadToServer = async () => {
+  const handleUpload = async () => {
     if (!file) {
       setStatus("Please select a CV first.");
       return;
@@ -51,11 +49,10 @@ export default function Uploader() {
       }
 
       setStatus(data.message || "Uploaded successfully!");
-      setSavedPath(data.local_path || "");
-      setEmail(data.email || "");
-      setPhone(data.phone || "");
       setSkills(data.skills || []);
+      setQualifications(data.qualifications || []);
       setPreview(data.text_preview || "");
+      setSavedPath(data.local_path || "");
     } catch (err) {
       console.error(err);
       setStatus("Error: could not connect to backend.");
@@ -110,7 +107,7 @@ export default function Uploader() {
         )}
 
         <button
-          onClick={handleUploadToServer}
+          onClick={handleUpload}
           style={{
             marginTop: "20px",
             padding: "10px 20px",
@@ -123,7 +120,7 @@ export default function Uploader() {
             width: "100%",
           }}
         >
-          Upload & Parse
+          Upload & Extract Skills
         </button>
 
         {status && (
@@ -142,7 +139,7 @@ export default function Uploader() {
           </p>
         )}
 
-        {(email || phone || (skills && skills.length > 0) || preview) && (
+        {(skills.length > 0 || qualifications.length > 0 || preview) && (
           <div
             style={{
               marginTop: "24px",
@@ -157,22 +154,17 @@ export default function Uploader() {
               Parsed CV Details
             </h3>
 
-            {email && (
-              <p>
-                <strong>Email:</strong> {email}
-              </p>
-            )}
-
-            {phone && (
-              <p>
-                <strong>Phone:</strong> {phone}
-              </p>
-            )}
-
-            {skills && skills.length > 0 && (
+            {skills.length > 0 && (
               <p>
                 <strong>Detected Skills:</strong>{" "}
                 {skills.join(", ")}
+              </p>
+            )}
+
+            {qualifications.length > 0 && (
+              <p>
+                <strong>Detected Qualifications:</strong>{" "}
+                {qualifications.join(", ")}
               </p>
             )}
 
