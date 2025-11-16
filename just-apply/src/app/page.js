@@ -9,7 +9,7 @@ export default function Uploader() {
   const [skills, setSkills] = useState([]);
   const [qualifications, setQualifications] = useState([]);
   const [preview, setPreview] = useState("");
-  const [savedPath, setSavedPath] = useState("");
+  const [azureBlobUrl, setAzureBlobUrl] = useState("");
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -20,7 +20,7 @@ export default function Uploader() {
       setSkills([]);
       setQualifications([]);
       setPreview("");
-      setSavedPath("");
+      setAzureBlobUrl("");
     }
   };
 
@@ -52,7 +52,7 @@ export default function Uploader() {
       setSkills(data.skills || []);
       setQualifications(data.qualifications || []);
       setPreview(data.text_preview || "");
-      setSavedPath(data.local_path || "");
+      setAzureBlobUrl(data.azure_blob_url || "");
     } catch (err) {
       console.error(err);
       setStatus("Error: could not connect to backend.");
@@ -127,7 +127,7 @@ export default function Uploader() {
           <p style={{ marginTop: "20px", fontSize: "14px" }}>{status}</p>
         )}
 
-        {savedPath && (
+        {azureBlobUrl && (
           <p
             style={{
               marginTop: "10px",
@@ -135,7 +135,15 @@ export default function Uploader() {
               wordBreak: "break-word",
             }}
           >
-            Saved locally at: {savedPath}
+            <strong>Stored in Azure:</strong>{" "}
+            <a
+              href={azureBlobUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "#ffe2c4", textDecoration: "underline" }}
+            >
+              {azureBlobUrl}
+            </a>
           </p>
         )}
 
@@ -156,8 +164,7 @@ export default function Uploader() {
 
             {skills.length > 0 && (
               <p>
-                <strong>Detected Skills:</strong>{" "}
-                {skills.join(", ")}
+                <strong>Detected Skills:</strong> {skills.join(", ")}
               </p>
             )}
 

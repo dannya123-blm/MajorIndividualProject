@@ -11,6 +11,40 @@ import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 
+from azure.storage.blob import BlobServiceClient
+from dotenv import load_dotenv
+
+# ---------- Env + Azure setup ----------
+
+# Load .env file from the project root (same folder as server.py)
+load_dotenv()
+
+AZURE_CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
+AZURE_CONTAINER = os.getenv("AZURE_CONTAINER_NAME", "cv-uploads")
+
+blob_service_client = None
+container_client = None
+
+if AZURE_CONNECTION_STRING:
+    blob_service_client = BlobServiceClient.from_connection_string(
+        AZURE_CONNECTION_STRING
+    )
+    container_client = blob_service_client.get_container_client(AZURE_CONTAINER)
+else:
+    print("WARNING: AZURE_CONNECTION_STRING not set. "
+          "Files will NOT be uploaded to Azure.")
+
+# ---------- Flask setup ----------
+
+app = Flask(__name__)
+CORS(app)
+
+# Local folder just for temporary storage (optional)
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# ---------- NLTK setup ----------
+
 # Make sure NLTK data is available (download once if missing)
 try:
     stopwords.words("english")
@@ -26,14 +60,6 @@ try:
     nltk.data.find("tokenizers/punkt_tab")
 except LookupError:
     nltk.download("punkt_tab")
-
-app = Flask(__name__)
-CORS(app)
-
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-# ---------- NLTK setup ----------
 
 EN_STOPWORDS = set(stopwords.words("english"))
 
@@ -106,6 +132,29 @@ def extract_qualifications(text: str) -> list[str]:
     return keyword_match(text, QUALIFICATION_KEYWORDS)
 
 
+# ---------- Azure helper ----------
+
+def upload_cv_to_azure(file_path: str, blob_name: str) -> str | None:
+    """
+    Uploads the file at file_path to Azure Blob Storage as blob_name
+    and returns the blob URL. If Azure is not configured, returns None.
+    """
+    if container_client is None:
+        # Azure not configured; skip upload
+        print("Azure container client not configured. Skipping upload.")
+        return None
+
+    with open(file_path, "rb") as data:
+        container_client.upload_blob(
+            name=blob_name,
+            data=data,
+            overwrite=True,
+        )
+
+    blob_client = container_client.get_blob_client(blob_name)
+    return blob_client.url
+
+
 # ---------- Text extraction helpers ----------
 
 def extract_text_from_pdf(path: str) -> str:
@@ -151,9 +200,11 @@ def upload_and_parse_cv():
     if file.filename == "":
         return jsonify({"error": "Empty filename"}), 400
 
-    # save file
+    # build timestamped filename
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     filename = f"{timestamp}-{file.filename}"
+
+    # save temporarily to local disk
     save_path = os.path.join(UPLOAD_FOLDER, filename)
     file.save(save_path)
 
@@ -170,13 +221,23 @@ def upload_and_parse_cv():
     qualifications = extract_qualifications(text)
     preview = text[:600] if text else ""
 
+    # upload to Azure Blob Storage
+    blob_url = upload_cv_to_azure(save_path, filename)
+
+    # optional: clean up local file
+    try:
+        if os.path.exists(save_path):
+            os.remove(save_path)
+    except Exception as e:
+        print("Could not delete temp file:", e)
+
     return jsonify({
         "message": "CV uploaded & parsed successfully (NLTK)",
-        "local_path": save_path,
         "original_name": file.filename,
         "skills": skills,
         "qualifications": qualifications,
         "text_preview": preview,
+        "azure_blob_url": blob_url,  # None if Azure not configured
     }), 201
 
 
