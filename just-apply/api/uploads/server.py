@@ -14,6 +14,8 @@ from nltk.tokenize import word_tokenize
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 
+import pandas as pd  
+
 # ---------- Env + Azure setup ----------
 load_dotenv()
 
@@ -29,21 +31,38 @@ if AZURE_CONNECTION_STRING:
     )
     container_client = blob_service_client.get_container_client(AZURE_CONTAINER)
 else:
-    print("WARNING: AZURE_CONNECTION_STRING not set. "
-          "Files will NOT be uploaded to Azure.")
+    print(
+        "WARNING: AZURE_CONNECTION_STRING not set. "
+        "Files will NOT be uploaded to Azure."
+    )
 
 # ---------- Flask setup ----------
 
 app = Flask(__name__)
 CORS(app)
 
+# absolute path to folder containing this file
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Local folder just for temporary storage (optional)
-UPLOAD_FOLDER = "uploads"
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# ---------- Load job posts CSV ----------
+
+JOB_CSV_PATH = os.path.join(BASE_DIR, "jobPosts", "jobposts.csv")
+
+print("Looking for jobposts.csv at:", JOB_CSV_PATH)
+try:
+    job_df = pd.read_csv(JOB_CSV_PATH)
+    print(f"Loaded {len(job_df)} job postings from {JOB_CSV_PATH}")
+except Exception as e:
+    print("ERROR loading jobposts.csv:", e)
+    job_df = None
 
 # ---------- NLTK setup ----------
 
-# Make sure NLTK data is available (download once if missing)
+# Make sure NLTK data is available 
 try:
     stopwords.words("english")
 except LookupError:
@@ -237,8 +256,63 @@ def upload_and_parse_cv():
         "text_preview": preview,
         "azure_blob_url": blob_url,  # None if Azure not configured
     }), 201
-    
-    
+
+
+@app.route("/api/match-jobs", methods=["POST"])
+def match_jobs():
+    """
+    Compare extracted skills/qualifications against jobposts.csv
+    and return the best matching jobs.
+    """
+    global job_df
+    if job_df is None:
+        return jsonify({"error": "Job dataset not loaded on server"}), 500
+
+    data = request.get_json(silent=True) or {}
+    user_skills = [s.lower() for s in data.get("skills", [])]
+    user_quals = [q.lower() for q in data.get("qualifications", [])]
+
+    if not user_skills and not user_quals:
+        return jsonify({"jobs": []})
+
+    df = job_df.copy()
+
+    # Build a single text blob from ALL string columns in the row.
+    # This way we don't care what your CSV headers are called.
+    def full_text_from_row(row):
+        parts = []
+        for value in row.values:
+            if isinstance(value, str):
+                parts.append(value.lower())
+        return " ".join(parts)
+
+    df["__full_text"] = df.apply(full_text_from_row, axis=1)
+
+    def compute_scores(text: str):
+        skill_score = sum(1 for s in user_skills if s in text)
+        qual_score = sum(1 for q in user_quals if q in text)
+        # weight skills a bit higher if you like
+        total = skill_score * 2 + qual_score
+        return skill_score, qual_score, total
+
+    df["skill_score"], df["qual_score"], df["total_score"] = zip(
+        *df["__full_text"].apply(compute_scores)
+    )
+
+    # Only keep jobs that have at least 1 match
+    df = df[df["total_score"] > 0]
+
+    # Return top 20 jobs
+    df = df.sort_values(by="total_score", ascending=False).head(20)
+
+    # Drop helper column before sending to frontend
+    df = df.drop(columns=["__full_text"])
+
+    #  Make it JSON-safe: replace NaN with empty string 
+    df = df.fillna("")
+
+    jobs = df.to_dict(orient="records")
+    return jsonify({"jobs": jobs})
 
 
 if __name__ == "__main__":

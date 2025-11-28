@@ -10,6 +10,7 @@ export default function Uploader() {
   const [qualifications, setQualifications] = useState([]);
   const [preview, setPreview] = useState("");
   const [azureBlobUrl, setAzureBlobUrl] = useState("");
+  const [jobs, setJobs] = useState([]);
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -21,6 +22,7 @@ export default function Uploader() {
       setQualifications([]);
       setPreview("");
       setAzureBlobUrl("");
+      setJobs([]); // reset jobs when new file chosen
     }
   };
 
@@ -36,6 +38,7 @@ export default function Uploader() {
     setStatus("Uploading & parsing CV...");
 
     try {
+      //  First: upload CV + extract skills/qualifications
       const res = await fetch("http://127.0.0.1:5000/api/upload-cv", {
         method: "POST",
         body: formData,
@@ -48,11 +51,34 @@ export default function Uploader() {
         return;
       }
 
-      setStatus(data.message || "Uploaded successfully!");
+      setStatus("CV parsed. Finding matching jobs...");
       setSkills(data.skills || []);
       setQualifications(data.qualifications || []);
       setPreview(data.text_preview || "");
       setAzureBlobUrl(data.azure_blob_url || "");
+
+      //  Then: send skills/quals to /api/match-jobs
+      const matchRes = await fetch("http://127.0.0.1:5000/api/match-jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          skills: data.skills || [],
+          qualifications: data.qualifications || [],
+        }),
+      });
+
+      const matchData = await matchRes.json();
+
+      if (!matchRes.ok) {
+        console.error("Job matching error:", matchData);
+        setStatus("CV parsed, but job matching failed.");
+        return;
+      }
+
+      setJobs(matchData.jobs || []);
+      setStatus(
+        `CV parsed successfully. Found ${matchData.jobs?.length || 0} matching jobs.`
+      );
     } catch (err) {
       console.error(err);
       setStatus("Error: could not connect to backend.");
@@ -78,7 +104,7 @@ export default function Uploader() {
           boxShadow: "0 8px 20px rgba(0,0,0,0.2)",
           textAlign: "center",
           color: "#ffffff",
-          width: "420px",
+          width: "520px",
           maxHeight: "90vh",
           overflowY: "auto",
         }}
@@ -120,7 +146,7 @@ export default function Uploader() {
             width: "100%",
           }}
         >
-          Upload & Extract Skills
+          Upload & Find Matching Jobs
         </button>
 
         {status && (
@@ -147,6 +173,7 @@ export default function Uploader() {
           </p>
         )}
 
+        {/* Parsed CV details */}
         {(skills.length > 0 || qualifications.length > 0 || preview) && (
           <div
             style={{
@@ -193,6 +220,51 @@ export default function Uploader() {
                 </p>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Recommended jobs */}
+        {jobs.length > 0 && (
+          <div
+            style={{
+              marginTop: "24px",
+              padding: "16px",
+              borderRadius: "8px",
+              backgroundColor: "rgba(0,0,0,0.15)",
+              textAlign: "left",
+              fontSize: "13px",
+            }}
+          >
+            <h3 style={{ marginBottom: "10px", fontSize: "16px" }}>
+              Recommended Jobs ({jobs.length})
+            </h3>
+
+            {jobs.map((job, idx) => (
+              <div
+                key={idx}
+                style={{
+                  marginBottom: "12px",
+                  paddingBottom: "8px",
+                  borderBottom: "1px solid rgba(255,255,255,0.2)",
+                }}
+              >
+                <p style={{ fontWeight: "bold" }}>
+                  {job.title || job.job_title || "Untitled role"}
+                </p>
+
+                {/* These may or may not exist depending on your CSV columns */}
+                {job.company && <p>Company: {job.company}</p>}
+                {job.location && <p>Location: {job.location}</p>}
+
+                {/* Matching scores from backend */}
+                {typeof job.total_score !== "undefined" && (
+                  <p style={{ fontSize: "12px", marginTop: "4px" }}>
+                    Match score: {job.total_score} (skills {job.skill_score} / quals{" "}
+                    {job.qual_score})
+                  </p>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
