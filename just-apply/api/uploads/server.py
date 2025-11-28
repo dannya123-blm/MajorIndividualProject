@@ -15,8 +15,6 @@ from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 
 # ---------- Env + Azure setup ----------
-
-# Load .env file from the project root (same folder as server.py)
 load_dotenv()
 
 AZURE_CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
@@ -239,6 +237,8 @@ def upload_and_parse_cv():
         "text_preview": preview,
         "azure_blob_url": blob_url,  # None if Azure not configured
     }), 201
+    
+    
 
 
 if __name__ == "__main__":
