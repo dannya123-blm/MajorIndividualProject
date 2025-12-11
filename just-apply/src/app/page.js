@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
+import justwork from "../images/justwork.png"; 
 
 export default function Uploader() {
   const [file, setFile] = useState(null);
@@ -38,7 +40,7 @@ export default function Uploader() {
     setStatus("Uploading & parsing CV...");
 
     try {
-      //  First: upload CV + extract skills/qualifications
+      // First: upload CV + extract skills/qualifications
       const res = await fetch("http://127.0.0.1:5000/api/upload-cv", {
         method: "POST",
         body: formData,
@@ -57,7 +59,7 @@ export default function Uploader() {
       setPreview(data.text_preview || "");
       setAzureBlobUrl(data.azure_blob_url || "");
 
-      //  Then: send skills/quals to /api/match-jobs
+      // Then: send skills/quals to /api/match-jobs
       const matchRes = await fetch("http://127.0.0.1:5000/api/match-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -86,11 +88,13 @@ export default function Uploader() {
   };
 
   return (
-    <div className="dashboard-root" style={{ minHeight: "100vh" }}>
+    <div className="dashboard-root">
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-top">
-          <button className="icon-btn" title="Toggle notifications">🔔</button>
+          <button className="icon-btn" title="Notifications">
+            🔔
+          </button>
         </div>
         <nav className="sidebar-nav">
           <button className="nav-link active">Dashboard</button>
@@ -105,7 +109,13 @@ export default function Uploader() {
         {/* Top navigation / brand */}
         <header className="topbar">
           <div className="brand">
-            <div className="logo">🧳</div>
+            <Image
+              src={justwork}
+              alt="Just Apply logo"
+              width={22}
+              height={22}
+              className="brand-logo"
+            />
             <div className="brand-name">Just Apply</div>
           </div>
 
@@ -142,12 +152,15 @@ export default function Uploader() {
           <div className="stat-card">
             <div className="stat-icon">📈</div>
             <div className="stat-label">Match Rate</div>
-            <div className="stat-value">0</div>
+            <div className="stat-value">
+              0
+            </div>
           </div>
         </section>
 
         {/* Upload + preview area */}
         <section className="upload-section">
+          {/* Left: upload card */}
           <div className="upload-card">
             <div className="upload-title">
               <span className="upload-icon">📁</span>
@@ -165,7 +178,9 @@ export default function Uploader() {
                 <div className="drop-text">
                   Drag and drop your CV here or click to browse
                 </div>
-                <div className="drop-sub">Supported formats: PDF, DOCX, TXT (Max 5MB)</div>
+                <div className="drop-sub">
+                  Supported formats: PDF, DOCX, TXT (Max 5MB)
+                </div>
               </div>
             </label>
 
@@ -174,21 +189,27 @@ export default function Uploader() {
                 {fileName ? `Selected: ${fileName}` : "No file selected"}
               </div>
               <button className="btn-primary" onClick={handleUpload}>
-                Upload & Find Matching Jobs
+                Upload &amp; Find Matching Jobs
               </button>
             </div>
 
             {status && <div className="status">{status}</div>}
+
             {azureBlobUrl && (
               <div className="azure">
                 <strong>Stored in Azure:</strong>{" "}
-                <a href={azureBlobUrl} target="_blank" rel="noreferrer">
+                <a
+                  href={azureBlobUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   {azureBlobUrl}
                 </a>
               </div>
             )}
           </div>
 
+          {/* Right: preview + skills */}
           <div className="preview-column">
             <div className="preview-card">
               <h4>CV Preview</h4>
@@ -198,7 +219,7 @@ export default function Uploader() {
             </div>
 
             <div className="skills-card">
-              <h4>Extracted Skills & Qualifications</h4>
+              <h4>Extracted Skills &amp; Qualifications</h4>
               <div className="chips">
                 {skills.length === 0 && qualifications.length === 0 && (
                   <div className="chip-empty">No skills detected yet</div>
@@ -235,7 +256,8 @@ export default function Uploader() {
                     </div>
                     {typeof job.total_score !== "undefined" && (
                       <div className="job-score">
-                        Match score: {job.total_score} (skills {job.skill_score} / quals {job.qual_score})
+                        Match score: {job.total_score} (skills{" "}
+                        {job.skill_score} / quals {job.qual_score})
                       </div>
                     )}
                   </div>
@@ -245,77 +267,6 @@ export default function Uploader() {
           </section>
         )}
       </main>
-
-      {/* minimal inline helper styles */}
-      <style jsx>{`
-        .dashboard-root {
-          display: flex;
-          background: var(--page-bg, #fff8f0);
-        }
-        .sidebar {
-          width: 80px;
-          padding: 18px 8px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          align-items: center;
-        }
-        .topbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 18px;
-        }
-        .brand { display:flex; align-items:center; gap:12px; }
-        .logo { font-size:20px; }
-        .topnav { display:flex; gap:12px; align-items:center; }
-        .topnav-item { background:transparent; border:none; padding:8px 10px; border-radius:8px; cursor:pointer; }
-        .topnav-item.active { background: #ff6200; color: #fff; }
-        .user { display:flex; align-items:center; gap:12px; }
-        .avatar { width:36px; height:36px; border-radius:50%; background:#e6e6e6; }
-
-        .main { flex:1; padding: 20px 28px; max-width: 1200px; margin: 0 auto; }
-
-        .stats-row { display:flex; gap:16px; margin-bottom:18px; flex-wrap:wrap; }
-        .stat-card { background:#fff; padding:14px 18px; border-radius:8px; min-width:180px; box-shadow: 0 6px 18px rgba(0,0,0,0.04); }
-        .stat-label { color:#666; font-size:13px; }
-        .stat-value { font-weight:700; font-size:18px; margin-top:6px; }
-
-        .upload-section { display:grid; grid-template-columns: 1fr 360px; gap:18px; align-items:start; }
-        .upload-card { background:#fff; padding:18px; border-radius:10px; box-shadow: 0 10px 30px rgba(0,0,0,0.04); }
-        .upload-title { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
-        .dropzone { border:1px dashed #e3e3e3; border-radius:8px; padding:26px; display:flex; align-items:center; justify-content:center; cursor:pointer; background:#fafafa; }
-        .dropzone input { display:none; }
-        .drop-inner { text-align:center; color:#777; }
-        .drop-text { font-weight:600; margin-top:8px; }
-        .drop-sub { margin-top:6px; font-size:12px; color:#999; }
-
-        .upload-actions { display:flex; gap:12px; margin-top:14px; align-items:center; }
-        .selected-file { flex:1; color:#666; font-size:14px; }
-        .btn-primary { background: #ff6200; color:#fff; border:none; padding:10px 12px; border-radius:8px; cursor:pointer; }
-
-        .preview-column { display:flex; flex-direction:column; gap:12px; }
-        .preview-card, .skills-card { background:#fff; padding:14px; border-radius:8px; box-shadow: 0 8px 20px rgba(0,0,0,0.04); }
-        .preview-text { min-height:120px; max-height:180px; overflow:auto; background:#fbfbfb; padding:10px; border-radius:6px; color:#333; font-size:13px; }
-
-        .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
-        .chip { padding:6px 10px; border-radius:20px; font-size:13px; display:inline-block; }
-        .chip-orange { background:#fff0e6; color:#ff6b2b; }
-        .chip-blue { background:#eaf6ff; color:#0066cc; }
-        .chip-empty { color:#999; font-size:13px; }
-
-        .jobs-section { margin-top:18px; }
-        .jobs-card { background:#fff; padding:16px; border-radius:10px; box-shadow: 0 8px 20px rgba(0,0,0,0.04); }
-        .job-item { padding:10px; border-radius:8px; background:#fff; margin-bottom:10px; }
-        .job-meta { color:#666; font-size:13px; margin-top:6px; }
-        .job-score { font-size:12px; color:#444; margin-top:6px; }
-
-        @media (max-width: 980px) {
-          .upload-section { grid-template-columns: 1fr; }
-          .sidebar { display:none; }
-          .topnav { display:none; }
-        }
-      `}</style>
     </div>
   );
 }

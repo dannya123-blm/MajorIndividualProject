@@ -1,6 +1,19 @@
+/* =========================
+   ORIGINAL BASE THEME
+   ========================= */
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* extra brand vars for the dashboard */
+  --brand-orange: #ff6200;
+  --brand-orange-soft: #ff8a3a;
+  --page-bg: #fff8f0;
+  --card-bg: #ffffff;
+  --text-main: #333333;
+  --text-muted: #777777;
+  --shadow-soft: 0 8px 18px rgba(0,0,0,0.04);
+  --shadow-strong: 0 10px 30px rgba(0,0,0,0.06);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -17,8 +30,8 @@ body {
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
+  color: var(--text-main);
+  background: var(--page-bg);
   font-family: Arial, Helvetica, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -41,15 +54,11 @@ a {
   }
 }
 
-/* ============================================================
-   DASHBOARD LAYOUT IMPROVEMENTS 
-   ============================================================ */
+/* =========================
+   DASHBOARD LAYOUT + STYLE
+   ========================= */
 
-html body > div:first-child::before {
-  display: none !important;
-}
-
-/* Root wrapper for dashboard */
+/* root container from page.js */
 .dashboard-root {
   display: flex;
   justify-content: center;
@@ -57,21 +66,71 @@ html body > div:first-child::before {
   padding: 28px 24px;
   gap: 28px;
   min-height: 100vh;
-  background: #fff8f0;
+  background: var(--page-bg);
 }
 
-/* Sidebar */
+/* -------- SIDEBAR (left) -------- */
+
 .sidebar {
-  width: 84px;
-  flex: 0 0 84px;
+  flex: 0 0 150px;                  
+  max-width: 150px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  align-items: center;
-  padding-top: 8px;
+  align-items: stretch;
+  background: #fff4ee;
+  border-radius: 16px;
+  padding: 16px 12px;
+  box-shadow: var(--shadow-soft);
 }
 
-/* Main centered column */
+/* top area with bell */
+.sidebar-top {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+.icon-btn {
+  background: #ffe0c4;
+  border-radius: 999px;
+  border: none;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+/* vertical nav group */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* nav buttons in sidebar */
+.sidebar .nav-link {
+  width: 100%;
+  font-size: 12px;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: none;
+  background: #ffffff;
+  color: #555;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+}
+
+.sidebar .nav-link:hover {
+  background: #ffeae0;
+}
+
+.sidebar .nav-link.active {
+  background: var(--brand-orange);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* -------- MAIN COLUMN -------- */
+
 .main {
   width: 100%;
   max-width: 1100px;
@@ -81,21 +140,31 @@ html body > div:first-child::before {
   gap: 18px;
 }
 
-/* Top bar containing: Logo | Tabs | User area */
+/* -------- Top bar -------- */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 4px;
   gap: 12px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
+.logo {
+  font-size: 20px;
+}
+
+.brand-name {
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--brand-orange);
+}
+
+/* top nav tabs */
 .topnav {
   flex: 1;
   display: flex;
@@ -103,13 +172,38 @@ html body > div:first-child::before {
   gap: 12px;
 }
 
+.topnav-item {
+  border: none;
+  padding: 8px 14px;
+  border-radius: 20px;
+  background: transparent;
+  font-size: 13px;
+  color: #777;
+  cursor: pointer;
+}
+
+.topnav-item.active {
+  background: var(--brand-orange);
+  color: #fff;
+  font-weight: 600;
+}
+
 .user {
   display: flex;
   align-items: center;
   gap: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
 }
 
-/* Stats row */
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #e1e1e1;
+}
+
+/* -------- Stats row -------- */
 .stats-row {
   display: flex;
   gap: 16px;
@@ -123,21 +217,35 @@ html body > div:first-child::before {
   padding: 14px 18px;
   border-radius: 10px;
   min-width: 200px;
-  box-shadow: 0 8px 18px rgba(0,0,0,0.04);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  box-shadow: var(--shadow-soft);
 }
 
-/* Upload zone + CV preview columns */
+.stat-icon {
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #222;
+  margin-top: 6px;
+}
+
+/* -------- Upload + Preview -------- */
 .upload-section {
   display: grid;
-  grid-template-columns: 1fr 360px; /* left main area | right preview area */
+  grid-template-columns: 1fr 360px;
   gap: 20px;
-  align-items: start;
+  align-items: flex-start;
 }
 
-/* Upload card */
+/* upload card */
 .upload-card {
   width: 100%;
   max-width: 760px;
@@ -145,14 +253,63 @@ html body > div:first-child::before {
   background: #fff;
   padding: 18px;
   border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.04);
+  box-shadow: var(--shadow-strong);
+  color: var(--text-main);
 }
 
+.upload-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.upload-title h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #444;
+}
+
+.upload-icon {
+  color: #ffb84d;
+}
+
+/* dropzone area */
 .dropzone {
   width: 100%;
+  border-radius: 8px;
+  border: 1px dashed #e0e0e0;
+  background: #fafafa;
+  padding: 24px;
+  cursor: pointer;
 }
 
-/* Upload "Selected file" + button row */
+.dropzone input {
+  display: none;
+}
+
+.drop-inner {
+  text-align: center;
+}
+
+.cloud {
+  font-size: 20px;
+  margin-bottom: 4px;
+}
+
+.drop-text {
+  font-weight: 600;
+  color: #444;
+  font-size: 14px;
+}
+
+.drop-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* file + button row */
 .upload-actions {
   display: flex;
   gap: 12px;
@@ -162,12 +319,41 @@ html body > div:first-child::before {
 
 .selected-file {
   flex: 1;
-  font-size: 14px;
-  color: #666;
+  font-size: 13px;
+  color: var(--text-muted);
   overflow-wrap: anywhere;
 }
 
-/* Right column with preview + skills */
+/* primary button */
+.btn-primary {
+  background: var(--brand-orange);
+  color: #fff;
+  border: none;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* status + azure text */
+.status {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #444;
+}
+
+.azure {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #555;
+}
+
+.azure a {
+  color: var(--brand-orange-soft);
+}
+
+/* -------- Right column (preview + skills) -------- */
 .preview-column {
   max-width: 360px;
   width: 100%;
@@ -177,35 +363,61 @@ html body > div:first-child::before {
 }
 
 .preview-card,
-.skills-card,
-.jobs-card {
+.skills-card {
   background: #fff;
   padding: 14px;
   border-radius: 10px;
-  box-shadow: 0 8px 20px rgba(0,0,0,0.04);
+  box-shadow: var(--shadow-soft);
 }
 
-/* Preview text */
+.preview-card h4,
+.skills-card h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #444;
+  margin-bottom: 8px;
+}
+
 .preview-text {
   min-height: 140px;
   max-height: 220px;
   overflow-y: auto;
-  background: #fafafa;
+  background: #fbfbfb;
   padding: 10px;
   border-radius: 6px;
   font-size: 13px;
   color: #333;
 }
 
-/* Skill chips */
+/* skills chips */
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
 }
 
-/* Recommended jobs section */
+.chip {
+  padding: 6px 10px;
+  border-radius: 20px;
+  font-size: 13px;
+}
+
+.chip-orange {
+  background: #fff0e6;
+  color: #ff6b2b;
+}
+
+.chip-blue {
+  background: #eaf6ff;
+  color: #0066cc;
+}
+
+.chip-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* -------- Recommended jobs -------- */
 .jobs-section {
   margin-top: 18px;
   display: flex;
@@ -215,10 +427,21 @@ html body > div:first-child::before {
 .jobs-card {
   width: 100%;
   max-width: 1100px;
+  background: #fff;
   padding: 18px;
   border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.04);
+  box-shadow: var(--shadow-strong);
+}
+
+.jobs-card h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #444;
+  margin-bottom: 8px;
+}
+
+.jobs-list {
+  margin-top: 6px;
 }
 
 .job-item {
@@ -229,7 +452,24 @@ html body > div:first-child::before {
   box-shadow: 0 6px 16px rgba(0,0,0,0.03);
 }
 
-/* Responsive */
+.job-title {
+  font-weight: 700;
+  color: #222;
+}
+
+.job-meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.job-score {
+  font-size: 12px;
+  color: #555;
+  margin-top: 4px;
+}
+
+/* -------- Responsive tweaks -------- */
 @media (max-width: 980px) {
   .dashboard-root {
     padding: 14px;
