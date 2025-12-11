@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import justwork from "../images/justwork.png"; 
+import justwork from "../images/justwork.png";
 
 export default function Uploader() {
   const [file, setFile] = useState(null);
@@ -13,6 +13,7 @@ export default function Uploader() {
   const [preview, setPreview] = useState("");
   const [azureBlobUrl, setAzureBlobUrl] = useState("");
   const [jobs, setJobs] = useState([]);
+  const [jobStats, setJobStats] = useState(null); 
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -24,7 +25,8 @@ export default function Uploader() {
       setQualifications([]);
       setPreview("");
       setAzureBlobUrl("");
-      setJobs([]); // reset jobs when new file chosen
+      setJobs([]);
+      setJobStats(null); // reset stats when new CV chosen
     }
   };
 
@@ -40,7 +42,7 @@ export default function Uploader() {
     setStatus("Uploading & parsing CV...");
 
     try {
-      // First: upload CV + extract skills/qualifications
+      // 1) Upload CV + extract skills/qualifications
       const res = await fetch("http://127.0.0.1:5000/api/upload-cv", {
         method: "POST",
         body: formData,
@@ -53,19 +55,20 @@ export default function Uploader() {
         return;
       }
 
-      setStatus("CV parsed. Finding matching jobs...");
       setSkills(data.skills || []);
       setQualifications(data.qualifications || []);
       setPreview(data.text_preview || "");
       setAzureBlobUrl(data.azure_blob_url || "");
+      setStatus("CV parsed. Finding matching jobs...");
 
-      // Then: send skills/quals to /api/match-jobs
+      // 2) Send skills/quals to /api/match-jobs with top_n = 10 (for the 10/50 test)
       const matchRes = await fetch("http://127.0.0.1:5000/api/match-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           skills: data.skills || [],
           qualifications: data.qualifications || [],
+          top_n: 10, // <-- this is the key for "top 10 out of 50"
         }),
       });
 
@@ -77,10 +80,27 @@ export default function Uploader() {
         return;
       }
 
-      setJobs(matchData.jobs || []);
-      setStatus(
-        `CV parsed successfully. Found ${matchData.jobs?.length || 0} matching jobs.`
-      );
+      const returnedJobs = matchData.jobs || [];
+      setJobs(returnedJobs);
+      setJobStats(matchData.metadata || null);
+
+      if (matchData.metadata) {
+        const {
+          total_jobs_loaded,
+          jobs_with_matches,
+          top_n,
+        } = matchData.metadata;
+
+        // "I loaded 50 jobs, X of them matched, and I'm showing the top 10."
+        setStatus(
+          `CV parsed successfully. From ${total_jobs_loaded} jobs, ` +
+            `${jobs_with_matches} had at least one match. Showing top ${top_n}.`
+        );
+      } else {
+        setStatus(
+          `CV parsed successfully. Found ${returnedJobs.length} matching jobs.`
+        );
+      }
     } catch (err) {
       console.error(err);
       setStatus("Error: could not connect to backend.");
@@ -152,9 +172,7 @@ export default function Uploader() {
           <div className="stat-card">
             <div className="stat-icon">📈</div>
             <div className="stat-label">Match Rate</div>
-            <div className="stat-value">
-              0
-            </div>
+            <div className="stat-value">0</div>
           </div>
         </section>
 
@@ -244,6 +262,16 @@ export default function Uploader() {
           <section className="jobs-section">
             <div className="jobs-card">
               <h4>Recommended Jobs ({jobs.length})</h4>
+
+              {jobStats && (
+                <p className="jobs-meta">
+                  Testing summary: loaded{" "}
+                  <strong>{jobStats.total_jobs_loaded}</strong> jobs;{" "}
+                  <strong>{jobStats.jobs_with_matches}</strong> had at least one
+                  match. Showing top <strong>{jobStats.top_n}</strong>.
+                </p>
+              )}
+
               <div className="jobs-list">
                 {jobs.map((job, idx) => (
                   <div className="job-item" key={idx}>

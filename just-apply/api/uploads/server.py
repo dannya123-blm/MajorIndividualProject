@@ -56,6 +56,22 @@ print("Looking for jobposts.csv at:", JOB_CSV_PATH)
 try:
     job_df = pd.read_csv(JOB_CSV_PATH)
     print(f"Loaded {len(job_df)} job postings from {JOB_CSV_PATH}")
+
+    # --- TESTING SUBSET: keep only 50 jobs for now ---
+    TEST_SAMPLE_SIZE = int(os.getenv("TEST_SAMPLE_SIZE", "50"))
+
+    if len(job_df) > TEST_SAMPLE_SIZE:
+        job_df = job_df.sample(TEST_SAMPLE_SIZE, random_state=42).reset_index(drop=True)
+        print(
+            f"[TEST MODE] Subsampled jobposts to {len(job_df)} rows "
+            f"for accuracy testing (requested {TEST_SAMPLE_SIZE})."
+        )
+    else:
+        print(
+            f"[TEST MODE] Dataset has {len(job_df)} rows "
+            f"(<= {TEST_SAMPLE_SIZE}), using all of them."
+        )
+
 except Exception as e:
     print("ERROR loading jobposts.csv:", e)
     job_df = None
@@ -263,6 +279,10 @@ def match_jobs():
     """
     Compare extracted skills/qualifications against jobposts.csv
     and return the best matching jobs.
+    TESTING BEHAVIOUR:
+    - job_df has already been limited to 50 rows (or less) at load time.
+    - control how many top jobs are returned with `top_n` in the JSON body.
+      e.g. { "skills": [...], "qualifications": [...], "top_n": 10 }
     """
     global job_df
     if job_df is None:
@@ -272,13 +292,29 @@ def match_jobs():
     user_skills = [s.lower() for s in data.get("skills", [])]
     user_quals = [q.lower() for q in data.get("qualifications", [])]
 
+    # number of top matches to return 
+    top_n = data.get("top_n", 10)
+    try:
+        top_n = int(top_n)
+    except (ValueError, TypeError):
+        top_n = 10
+    if top_n <= 0:
+        top_n = 10
+
     if not user_skills and not user_quals:
-        return jsonify({"jobs": []})
+        return jsonify({
+            "jobs": [],
+            "metadata": {
+                "message": "No skills or qualifications provided.",
+                "total_jobs_loaded": int(len(job_df)),
+                "jobs_with_matches": 0,
+                "top_n": int(top_n),
+            },
+        })
 
     df = job_df.copy()
 
     # Build a single text blob from ALL string columns in the row.
-    # This way we don't care what your CSV headers are called.
     def full_text_from_row(row):
         parts = []
         for value in row.values:
@@ -291,7 +327,6 @@ def match_jobs():
     def compute_scores(text: str):
         skill_score = sum(1 for s in user_skills if s in text)
         qual_score = sum(1 for q in user_quals if q in text)
-        # weight skills a bit higher if you like
         total = skill_score * 2 + qual_score
         return skill_score, qual_score, total
 
@@ -302,8 +337,22 @@ def match_jobs():
     # Only keep jobs that have at least 1 match
     df = df[df["total_score"] > 0]
 
-    # Return top 20 jobs
-    df = df.sort_values(by="total_score", ascending=False).head(20)
+    jobs_with_matches = len(df)
+
+    # If nothing matched at all, return early with metadata
+    if jobs_with_matches == 0:
+        return jsonify({
+            "jobs": [],
+            "metadata": {
+                "message": "No jobs matched the provided skills/qualifications.",
+                "total_jobs_loaded": int(len(job_df)),
+                "jobs_with_matches": 0,
+                "top_n": int(top_n),
+            },
+        })
+
+    # Sort by score and keep the top N jobs (e.g. top 10 out of the 50 dataset)
+    df = df.sort_values(by="total_score", ascending=False).head(top_n)
 
     # Drop helper column before sending to frontend
     df = df.drop(columns=["__full_text"])
@@ -312,7 +361,16 @@ def match_jobs():
     df = df.fillna("")
 
     jobs = df.to_dict(orient="records")
-    return jsonify({"jobs": jobs})
+
+    return jsonify({
+        "jobs": jobs,
+        "metadata": {
+            "total_jobs_loaded": int(len(job_df)),      
+            "jobs_with_matches": int(jobs_with_matches),
+            "top_n": int(top_n),
+            "match_coverage_ratio": jobs_with_matches / float(len(job_df)),
+        },
+    })
 
 
 if __name__ == "__main__":
