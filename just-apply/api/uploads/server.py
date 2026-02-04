@@ -57,7 +57,7 @@ try:
     job_df = pd.read_csv(JOB_CSV_PATH)
     print(f"Loaded {len(job_df)} job postings from {JOB_CSV_PATH}")
 
-    # --- TESTING SUBSET: keep only 50 jobs for now ---
+    # --- TESTING SUBSET: ---
     TEST_SAMPLE_SIZE = int(os.getenv("TEST_SAMPLE_SIZE", "50"))
 
     if len(job_df) > TEST_SAMPLE_SIZE:
@@ -78,7 +78,6 @@ except Exception as e:
 
 # ---------- NLTK setup ----------
 
-# Make sure NLTK data is available 
 try:
     stopwords.words("english")
 except LookupError:
