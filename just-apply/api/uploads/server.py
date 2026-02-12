@@ -10,11 +10,11 @@ from docx import Document
 import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
-
+from flasgger import Swagger
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 
-import pandas as pd  
+import pandas as pd 
 
 # ---------- Env + Azure setup ----------
 load_dotenv()
@@ -24,6 +24,7 @@ AZURE_CONTAINER = os.getenv("AZURE_CONTAINER_NAME", "cv-uploads")
 
 blob_service_client = None
 container_client = None
+
 
 if AZURE_CONNECTION_STRING:
     blob_service_client = BlobServiceClient.from_connection_string(
@@ -40,6 +41,8 @@ else:
 
 app = Flask(__name__)
 CORS(app)
+
+swagger = Swagger(app) 
 
 # absolute path to folder containing this file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -225,6 +228,43 @@ def health():
 
 @app.route("/api/upload-cv", methods=["POST"])
 def upload_and_parse_cv():
+    """
+    Upload a CV and extract skills
+    ---
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: file
+        in: formData
+        type: file
+        required: true
+        description: CV file (PDF or DOCX)
+    responses:
+      201:
+        description: CV successfully processed
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            original_name:
+              type: string
+            skills:
+              type: array
+              items:
+                type: string
+            qualifications:
+              type: array
+              items:
+                type: string
+            text_preview:
+              type: string
+            azure_blob_url:
+              type: string
+      400:
+        description: Invalid file upload
+    """
+
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -269,7 +309,7 @@ def upload_and_parse_cv():
         "skills": skills,
         "qualifications": qualifications,
         "text_preview": preview,
-        "azure_blob_url": blob_url,  # None if Azure not configured
+        "azure_blob_url": blob_url,
     }), 201
 
 

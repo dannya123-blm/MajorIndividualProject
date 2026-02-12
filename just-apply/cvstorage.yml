@@ -1,0 +1,55 @@
+openapi: 3.0.3
+info:
+  title: Just Apply API
+  description: API for CV upload, NLP skill extraction, and Azure storage integration.
+  version: 1.0.0
+
+servers:
+  - url: http://127.0.0.1:5000
+    description: Local development server
+
+paths:
+  /api/upload-cv:
+    post:
+      summary: Upload a CV and extract skills
+      description: Upload a PDF or DOCX CV file. The system extracts skills, qualifications, and uploads to Azure Blob Storage.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CV file (PDF or DOCX)
+      responses:
+        "200":
+          description: CV successfully processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: CV uploaded and processed successfully
+                  skills:
+                    type: array
+                    items:
+                      type: string
+                    example: ["Python", "React", "Azure"]
+                  qualifications:
+                    type: array
+                    items:
+                      type: string
+                    example: ["BSc", "AWS Certified"]
+                  text_preview:
+                    type: string
+                    example: Extracted text preview...
+                  azure_blob_url:
+                    type: string
+                    example: https://justapplystorage.blob.core.windows.net/cv-uploads/20260212164022-20251211050046-ceevee.pdf
+        "400":
+          description: Invalid file upload
