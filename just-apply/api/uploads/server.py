@@ -314,15 +314,58 @@ def upload_and_parse_cv():
 
 
 @app.route("/api/match-jobs", methods=["POST"])
+@app.route("/api/match-jobs", methods=["POST"])
 def match_jobs():
     """
-    Compare extracted skills/qualifications against jobposts.csv
-    and return the best matching jobs.
-    TESTING BEHAVIOUR:
-    - job_df has already been limited to 50 rows (or less) at load time.
-    - control how many top jobs are returned with `top_n` in the JSON body.
-      e.g. { "skills": [...], "qualifications": [...], "top_n": 10 }
+    Match extracted skills and qualifications against job posts
+    ---
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            skills:
+              type: array
+              items:
+                type: string
+              example: ["python", "django"]
+            qualifications:
+              type: array
+              items:
+                type: string
+              example: ["bachelor"]
+            top_n:
+              type: integer
+              example: 10
+    responses:
+      200:
+        description: Matching job results returned
+        schema:
+          type: object
+          properties:
+            jobs:
+              type: array
+              items:
+                type: object
+            metadata:
+              type: object
+              properties:
+                total_jobs_loaded:
+                  type: integer
+                jobs_with_matches:
+                  type: integer
+                top_n:
+                  type: integer
+                match_coverage_ratio:
+                  type: number
+      500:
+        description: Job dataset not loaded
     """
+
     global job_df
     if job_df is None:
         return jsonify({"error": "Job dataset not loaded on server"}), 500
@@ -331,7 +374,6 @@ def match_jobs():
     user_skills = [s.lower() for s in data.get("skills", [])]
     user_quals = [q.lower() for q in data.get("qualifications", [])]
 
-    # number of top matches to return 
     top_n = data.get("top_n", 10)
     try:
         top_n = int(top_n)
@@ -353,7 +395,6 @@ def match_jobs():
 
     df = job_df.copy()
 
-    # Build a single text blob from ALL string columns in the row.
     def full_text_from_row(row):
         parts = []
         for value in row.values:
@@ -373,12 +414,9 @@ def match_jobs():
         *df["__full_text"].apply(compute_scores)
     )
 
-    # Only keep jobs that have at least 1 match
     df = df[df["total_score"] > 0]
-
     jobs_with_matches = len(df)
 
-    # If nothing matched at all, return early with metadata
     if jobs_with_matches == 0:
         return jsonify({
             "jobs": [],
@@ -390,13 +428,8 @@ def match_jobs():
             },
         })
 
-    # Sort by score and keep the top N jobs (e.g. top 10 out of the 50 dataset)
     df = df.sort_values(by="total_score", ascending=False).head(top_n)
-
-    # Drop helper column before sending to frontend
     df = df.drop(columns=["__full_text"])
-
-    #  Make it JSON-safe: replace NaN with empty string 
     df = df.fillna("")
 
     jobs = df.to_dict(orient="records")
@@ -404,7 +437,7 @@ def match_jobs():
     return jsonify({
         "jobs": jobs,
         "metadata": {
-            "total_jobs_loaded": int(len(job_df)),      
+            "total_jobs_loaded": int(len(job_df)),
             "jobs_with_matches": int(jobs_with_matches),
             "top_n": int(top_n),
             "match_coverage_ratio": jobs_with_matches / float(len(job_df)),
