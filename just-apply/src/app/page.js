@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Image from "next/image";
 import justwork from "../images/justwork.png";
 
@@ -14,6 +14,9 @@ export default function Uploader() {
   const [azureBlobUrl, setAzureBlobUrl] = useState("");
   const [jobs, setJobs] = useState([]);
   const [jobStats, setJobStats] = useState(null);
+  const [sortBy, setSortBy] = useState("match_percentage");
+  const [industryFilter, setIndustryFilter] = useState("All");
+  const [locationFilter, setLocationFilter] = useState("All");
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -27,6 +30,9 @@ export default function Uploader() {
       setAzureBlobUrl("");
       setJobs([]);
       setJobStats(null);
+      setSortBy("match_percentage");
+      setIndustryFilter("All");
+      setLocationFilter("All");
     }
   };
 
@@ -121,6 +127,62 @@ export default function Uploader() {
     }
   };
 
+  const industries = useMemo(() => {
+    const values = Array.from(
+      new Set(
+        jobs
+          .map((job) => job.industry)
+          .filter((value) => typeof value === "string" && value.trim() !== "")
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    return ["All", ...values];
+  }, [jobs]);
+
+  const locations = useMemo(() => {
+    const values = Array.from(
+      new Set(
+        jobs
+          .map((job) => job.location)
+          .filter((value) => typeof value === "string" && value.trim() !== "")
+      )
+    ).sort((a, b) => a.localeCompare(b));
+
+    return ["All", ...values];
+  }, [jobs]);
+
+  const filteredJobs = useMemo(() => {
+    let result = [...jobs];
+
+    if (industryFilter !== "All") {
+      result = result.filter((job) => job.industry === industryFilter);
+    }
+
+    if (locationFilter !== "All") {
+      result = result.filter((job) => job.location === locationFilter);
+    }
+
+    result.sort((a, b) => {
+      if (sortBy === "match_percentage") {
+        return (b.match_percentage || 0) - (a.match_percentage || 0);
+      }
+
+      if (sortBy === "total_score") {
+        return (b.total_score || 0) - (a.total_score || 0);
+      }
+
+      if (sortBy === "job_title") {
+        const aTitle = (a.title || a.job_title || "").toLowerCase();
+        const bTitle = (b.title || b.job_title || "").toLowerCase();
+        return aTitle.localeCompare(bTitle);
+      }
+
+      return 0;
+    });
+
+    return result;
+  }, [jobs, sortBy, industryFilter, locationFilter]);
+
   return (
     <div className="dashboard-root">
       {/* Sidebar */}
@@ -187,12 +249,12 @@ export default function Uploader() {
             <div className="stat-icon">📈</div>
             <div className="stat-label">Match Rate</div>
             <div className="stat-value">
-              {jobs.length > 0
+              {filteredJobs.length > 0
                 ? `${Math.round(
-                    jobs.reduce(
+                    filteredJobs.reduce(
                       (sum, job) => sum + (job.match_percentage || 0),
                       0
-                    ) / jobs.length
+                    ) / filteredJobs.length
                   )}%`
                 : "0%"}
             </div>
@@ -284,7 +346,7 @@ export default function Uploader() {
         {jobs.length > 0 && (
           <section className="jobs-section">
             <div className="jobs-card">
-              <h4>Recommended Jobs ({jobs.length})</h4>
+              <h4>Recommended Jobs ({filteredJobs.length})</h4>
 
               {jobStats && (
                 <p className="jobs-meta">
@@ -295,8 +357,99 @@ export default function Uploader() {
                 </p>
               )}
 
+              <div
+                style={{
+                  display: "flex",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                  marginBottom: "20px",
+                }}
+              >
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "14px",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    Sort by
+                  </label>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    style={{
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "1px solid #ddd",
+                      backgroundColor: "#fff",
+                    }}
+                  >
+                    <option value="match_percentage">Match Percentage</option>
+                    <option value="total_score">Total Score</option>
+                    <option value="job_title">Job Title</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "14px",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    Filter by industry
+                  </label>
+                  <select
+                    value={industryFilter}
+                    onChange={(e) => setIndustryFilter(e.target.value)}
+                    style={{
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "1px solid #ddd",
+                      backgroundColor: "#fff",
+                    }}
+                  >
+                    {industries.map((industry) => (
+                      <option key={industry} value={industry}>
+                        {industry}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "14px",
+                      marginBottom: "6px",
+                    }}
+                  >
+                    Filter by location
+                  </label>
+                  <select
+                    value={locationFilter}
+                    onChange={(e) => setLocationFilter(e.target.value)}
+                    style={{
+                      padding: "10px",
+                      borderRadius: "8px",
+                      border: "1px solid #ddd",
+                      backgroundColor: "#fff",
+                    }}
+                  >
+                    {locations.map((location) => (
+                      <option key={location} value={location}>
+                        {location}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div className="jobs-list">
-                {jobs.map((job, idx) => (
+                {filteredJobs.map((job, idx) => (
                   <div className="job-item" key={idx}>
                     <div className="job-title">
                       {job.title || job.job_title || "Untitled role"}
