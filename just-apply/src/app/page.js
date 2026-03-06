@@ -190,6 +190,24 @@ export default function Uploader() {
         )
       : 0;
 
+  const topMissingSkills = useMemo(() => {
+    const counts = {};
+
+    filteredJobs.forEach((job) => {
+      if (Array.isArray(job.missing_skills)) {
+        job.missing_skills.forEach((skill) => {
+          const key = skill.toLowerCase();
+          counts[key] = (counts[key] || 0) + 1;
+        });
+      }
+    });
+
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([skill]) => skill);
+  }, [filteredJobs]);
+
   return (
     <div className="dashboard-root">
       <aside className="sidebar">
@@ -364,6 +382,31 @@ export default function Uploader() {
             </div>
           </div>
         </section>
+
+        {topMissingSkills.length > 0 && (
+          <section className="insights-section">
+            <div className="insights-card">
+              <div className="section-head compact">
+                <div>
+                  <p className="section-kicker">Insights</p>
+                  <h4>Skill Gap Insights</h4>
+                </div>
+              </div>
+
+              <p className="insight-text">
+                Most common missing skills across recommended jobs:
+              </p>
+
+              <div className="chips">
+                {topMissingSkills.map((skill, i) => (
+                  <span key={i} className="chip chip-blue">
+                    {skill}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
 
         {jobs.length > 0 && (
           <section className="jobs-section">
