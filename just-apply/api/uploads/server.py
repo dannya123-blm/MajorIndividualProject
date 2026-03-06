@@ -14,9 +14,8 @@ from flasgger import Swagger
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 
-import pandas as pd 
+import pandas as pd
 
-# ---------- Env + Azure setup ----------
 load_dotenv()
 
 AZURE_CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
@@ -24,7 +23,6 @@ AZURE_CONTAINER = os.getenv("AZURE_CONTAINER_NAME", "cv-uploads")
 
 blob_service_client = None
 container_client = None
-
 
 if AZURE_CONNECTION_STRING:
     blob_service_client = BlobServiceClient.from_connection_string(
@@ -37,21 +35,21 @@ else:
         "Files will NOT be uploaded to Azure."
     )
 
-# ---------- Flask setup ----------
-
 app = Flask(__name__)
 CORS(app)
 
-swagger = Swagger(app) 
+swagger = Swagger(app, template={
+    "info": {
+        "title": "Just Apply API",
+        "description": "API for CV upload, NLP skill extraction, and job matching.",
+        "version": "1.0.0"
+    }
+})
 
-# absolute path to folder containing this file
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Local folder just for temporary storage (optional)
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-# ---------- Load job posts CSV ----------
 
 JOB_CSV_PATH = os.path.join(BASE_DIR, "jobPosts", "jobposts.csv")
 
@@ -60,7 +58,6 @@ try:
     job_df = pd.read_csv(JOB_CSV_PATH)
     print(f"Loaded {len(job_df)} job postings from {JOB_CSV_PATH}")
 
-    # --- TESTING SUBSET: ---
     TEST_SAMPLE_SIZE = int(os.getenv("TEST_SAMPLE_SIZE", "50"))
 
     if len(job_df) > TEST_SAMPLE_SIZE:
@@ -78,8 +75,6 @@ try:
 except Exception as e:
     print("ERROR loading jobposts.csv:", e)
     job_df = None
-
-# ---------- NLTK setup ----------
 
 try:
     stopwords.words("english")
@@ -140,15 +135,12 @@ def keyword_match(text: str, keywords: list[str]) -> list[str]:
     for kw in keywords:
         kw_lower = kw.lower()
         if " " in kw_lower:
-            # phrase like "machine learning"
             if kw_lower in token_text:
                 found.append(kw)
         else:
-            # single word like "python"
             if kw_lower in token_set:
                 found.append(kw)
 
-    # remove duplicates, keep order
     seen = set()
     unique = []
     for item in found:
@@ -167,15 +159,8 @@ def extract_qualifications(text: str) -> list[str]:
     return keyword_match(text, QUALIFICATION_KEYWORDS)
 
 
-# ---------- Azure helper ----------
-
 def upload_cv_to_azure(file_path: str, blob_name: str) -> str | None:
-    """
-    Uploads the file at file_path to Azure Blob Storage as blob_name
-    and returns the blob URL. If Azure is not configured, returns None.
-    """
     if container_client is None:
-        # Azure not configured; skip upload
         print("Azure container client not configured. Skipping upload.")
         return None
 
@@ -189,8 +174,6 @@ def upload_cv_to_azure(file_path: str, blob_name: str) -> str | None:
     blob_client = container_client.get_blob_client(blob_name)
     return blob_client.url
 
-
-# ---------- Text extraction helpers ----------
 
 def extract_text_from_pdf(path: str) -> str:
     try:
@@ -219,8 +202,6 @@ def extract_text_generic(path: str) -> str:
         return ""
 
 
-# ---------- Routes ----------
-
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
@@ -231,6 +212,8 @@ def upload_and_parse_cv():
     """
     Upload a CV and extract skills
     ---
+    tags:
+      - CV Processing
     consumes:
       - multipart/form-data
     parameters:
@@ -261,10 +244,17 @@ def upload_and_parse_cv():
               type: string
             azure_blob_url:
               type: string
+        examples:
+          application/json:
+            message: CV uploaded & parsed successfully (NLTK)
+            original_name: cv.pdf
+            skills: ["python", "sql"]
+            qualifications: ["bachelor"]
+            text_preview: Extracted CV text preview
+            azure_blob_url: https://example.blob.core.windows.net/cv-uploads/cv.pdf
       400:
         description: Invalid file upload
     """
-
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -272,15 +262,12 @@ def upload_and_parse_cv():
     if file.filename == "":
         return jsonify({"error": "Empty filename"}), 400
 
-    # build timestamped filename
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     filename = f"{timestamp}-{file.filename}"
 
-    # save temporarily to local disk
     save_path = os.path.join(UPLOAD_FOLDER, filename)
     file.save(save_path)
 
-    # extract text
     ext = os.path.splitext(file.filename)[1].lower()
     if ext == ".pdf":
         text = extract_text_from_pdf(save_path)
@@ -293,10 +280,8 @@ def upload_and_parse_cv():
     qualifications = extract_qualifications(text)
     preview = text[:600] if text else ""
 
-    # upload to Azure Blob Storage
     blob_url = upload_cv_to_azure(save_path, filename)
 
-    # optional: clean up local file
     try:
         if os.path.exists(save_path):
             os.remove(save_path)
@@ -314,11 +299,12 @@ def upload_and_parse_cv():
 
 
 @app.route("/api/match-jobs", methods=["POST"])
-@app.route("/api/match-jobs", methods=["POST"])
 def match_jobs():
     """
     Match extracted skills and qualifications against job posts
     ---
+    tags:
+      - Job Matching
     consumes:
       - application/json
     parameters:
@@ -365,20 +351,30 @@ def match_jobs():
       500:
         description: Job dataset not loaded
     """
-
     global job_df
     if job_df is None:
         return jsonify({"error": "Job dataset not loaded on server"}), 500
 
     data = request.get_json(silent=True) or {}
-    user_skills = [s.lower() for s in data.get("skills", [])]
-    user_quals = [q.lower() for q in data.get("qualifications", [])]
+
+    raw_skills = data.get("skills", [])
+    raw_quals = data.get("qualifications", [])
+
+    if not isinstance(raw_skills, list):
+        return jsonify({"error": "skills must be a list"}), 400
+
+    if not isinstance(raw_quals, list):
+        return jsonify({"error": "qualifications must be a list"}), 400
+
+    user_skills = [str(s).lower() for s in raw_skills]
+    user_quals = [str(q).lower() for q in raw_quals]
 
     top_n = data.get("top_n", 10)
     try:
         top_n = int(top_n)
     except (ValueError, TypeError):
         top_n = 10
+
     if top_n <= 0:
         top_n = 10
 
@@ -391,7 +387,7 @@ def match_jobs():
                 "jobs_with_matches": 0,
                 "top_n": int(top_n),
             },
-        })
+        }), 200
 
     df = job_df.copy()
 
@@ -401,6 +397,27 @@ def match_jobs():
             if isinstance(value, str):
                 parts.append(value.lower())
         return " ".join(parts)
+
+    def find_missing_skills(text: str, skills: list[str]) -> list[str]:
+        missing = []
+        for skill in SKILL_KEYWORDS:
+            if skill.lower() in text and skill.lower() not in skills:
+                missing.append(skill)
+        return missing
+
+    def find_matched_skills(text: str, skills: list[str]) -> list[str]:
+        matched = []
+        for skill in skills:
+            if skill in text:
+                matched.append(skill)
+        return matched
+
+    def find_missing_qualifications(text: str, quals: list[str]) -> list[str]:
+        missing = []
+        for qual in QUALIFICATION_KEYWORDS:
+            if qual.lower() in text and qual.lower() not in quals:
+                missing.append(qual)
+        return missing
 
     df["__full_text"] = df.apply(full_text_from_row, axis=1)
 
@@ -412,6 +429,16 @@ def match_jobs():
 
     df["skill_score"], df["qual_score"], df["total_score"] = zip(
         *df["__full_text"].apply(compute_scores)
+    )
+
+    df["matched_skills"] = df["__full_text"].apply(
+        lambda text: find_matched_skills(text, user_skills)
+    )
+    df["missing_skills"] = df["__full_text"].apply(
+        lambda text: find_missing_skills(text, user_skills)
+    )
+    df["missing_qualifications"] = df["__full_text"].apply(
+        lambda text: find_missing_qualifications(text, user_quals)
     )
 
     df = df[df["total_score"] > 0]
@@ -426,7 +453,7 @@ def match_jobs():
                 "jobs_with_matches": 0,
                 "top_n": int(top_n),
             },
-        })
+        }), 200
 
     df = df.sort_values(by="total_score", ascending=False).head(top_n)
     df = df.drop(columns=["__full_text"])
@@ -442,7 +469,7 @@ def match_jobs():
             "top_n": int(top_n),
             "match_coverage_ratio": jobs_with_matches / float(len(job_df)),
         },
-    })
+    }), 200
 
 
 if __name__ == "__main__":
