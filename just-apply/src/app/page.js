@@ -13,7 +13,7 @@ export default function Uploader() {
   const [preview, setPreview] = useState("");
   const [azureBlobUrl, setAzureBlobUrl] = useState("");
   const [jobs, setJobs] = useState([]);
-  const [jobStats, setJobStats] = useState(null); 
+  const [jobStats, setJobStats] = useState(null);
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -26,7 +26,7 @@ export default function Uploader() {
       setPreview("");
       setAzureBlobUrl("");
       setJobs([]);
-      setJobStats(null); // reset stats when new CV chosen
+      setJobStats(null);
     }
   };
 
@@ -68,7 +68,7 @@ export default function Uploader() {
         body: JSON.stringify({
           skills: data.skills || [],
           qualifications: data.qualifications || [],
-          top_n: 10, // <-- this is the key for "top 10 out of 50"
+          top_n: 10,
         }),
       });
 
@@ -80,18 +80,32 @@ export default function Uploader() {
         return;
       }
 
-      const returnedJobs = matchData.jobs || [];
+      const returnedJobs = (matchData.jobs || []).map((job) => {
+        const matchedCount = Array.isArray(job.matched_skills)
+          ? job.matched_skills.length
+          : 0;
+        const missingCount = Array.isArray(job.missing_skills)
+          ? job.missing_skills.length
+          : 0;
+        const totalRelevantSkills = matchedCount + missingCount;
+        const matchPercentage =
+          totalRelevantSkills > 0
+            ? Math.round((matchedCount / totalRelevantSkills) * 100)
+            : 0;
+
+        return {
+          ...job,
+          match_percentage: matchPercentage,
+        };
+      });
+
       setJobs(returnedJobs);
       setJobStats(matchData.metadata || null);
 
       if (matchData.metadata) {
-        const {
-          total_jobs_loaded,
-          jobs_with_matches,
-          top_n,
-        } = matchData.metadata;
+        const { total_jobs_loaded, jobs_with_matches, top_n } =
+          matchData.metadata;
 
-        // "I loaded 50 jobs, X of them matched, and I'm showing the top 10."
         setStatus(
           `CV parsed successfully. From ${total_jobs_loaded} jobs, ` +
             `${jobs_with_matches} had at least one match. Showing top ${top_n}.`
@@ -172,7 +186,16 @@ export default function Uploader() {
           <div className="stat-card">
             <div className="stat-icon">📈</div>
             <div className="stat-label">Match Rate</div>
-            <div className="stat-value">0</div>
+            <div className="stat-value">
+              {jobs.length > 0
+                ? `${Math.round(
+                    jobs.reduce(
+                      (sum, job) => sum + (job.match_percentage || 0),
+                      0
+                    ) / jobs.length
+                  )}%`
+                : "0%"}
+            </div>
           </div>
         </section>
 
@@ -182,7 +205,7 @@ export default function Uploader() {
           <div className="upload-card">
             <div className="upload-title">
               <span className="upload-icon">📁</span>
-              <h3>Upload Your CV</h3>
+              <h3>Upload CV</h3>
             </div>
 
             <label className="dropzone">
@@ -194,7 +217,7 @@ export default function Uploader() {
               <div className="drop-inner">
                 <div className="cloud">☁️</div>
                 <div className="drop-text">
-                  Drag and drop your CV here or click to browse
+                  Drag and drop CV here or click to browse
                 </div>
                 <div className="drop-sub">
                   Supported formats: PDF, DOCX, TXT (Max 5MB)
@@ -278,16 +301,78 @@ export default function Uploader() {
                     <div className="job-title">
                       {job.title || job.job_title || "Untitled role"}
                     </div>
+
                     <div className="job-meta">
                       {job.company && <span>{job.company}</span>}
                       {job.location && <span> • {job.location}</span>}
+                      {job.industry && <span> • {job.industry}</span>}
                     </div>
+
                     {typeof job.total_score !== "undefined" && (
                       <div className="job-score">
-                        Match score: {job.total_score} (skills{" "}
-                        {job.skill_score} / quals {job.qual_score})
+                        Match score: {job.total_score} (skills {job.skill_score}{" "}
+                        / quals {job.qual_score})
                       </div>
                     )}
+
+                    {typeof job.match_percentage !== "undefined" && (
+                      <div className="job-score">
+                        Match percentage: {job.match_percentage}%
+                      </div>
+                    )}
+
+                    {Array.isArray(job.matched_skills) &&
+                      job.matched_skills.length > 0 && (
+                        <div className="job-tags-block">
+                          <div className="job-tags-title">Matched skills</div>
+                          <div className="chips">
+                            {job.matched_skills.map((skill, skillIdx) => (
+                              <span
+                                key={`matched-${idx}-${skillIdx}`}
+                                className="chip chip-orange"
+                              >
+                                {skill}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                    {Array.isArray(job.missing_skills) &&
+                      job.missing_skills.length > 0 && (
+                        <div className="job-tags-block">
+                          <div className="job-tags-title">Missing skills</div>
+                          <div className="chips">
+                            {job.missing_skills.map((skill, skillIdx) => (
+                              <span
+                                key={`missing-skill-${idx}-${skillIdx}`}
+                                className="chip chip-blue"
+                              >
+                                {skill}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                    {Array.isArray(job.missing_qualifications) &&
+                      job.missing_qualifications.length > 0 && (
+                        <div className="job-tags-block">
+                          <div className="job-tags-title">
+                            Missing qualifications
+                          </div>
+                          <div className="chips">
+                            {job.missing_qualifications.map((qual, qualIdx) => (
+                              <span
+                                key={`missing-qual-${idx}-${qualIdx}`}
+                                className="chip chip-blue"
+                              >
+                                {qual}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                   </div>
                 ))}
               </div>
