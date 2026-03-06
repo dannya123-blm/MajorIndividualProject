@@ -48,7 +48,6 @@ export default function Uploader() {
     setStatus("Uploading & parsing CV...");
 
     try {
-      // 1) Upload CV + extract skills/qualifications
       const res = await fetch("http://127.0.0.1:5000/api/upload-cv", {
         method: "POST",
         body: formData,
@@ -67,7 +66,6 @@ export default function Uploader() {
       setAzureBlobUrl(data.azure_blob_url || "");
       setStatus("CV parsed. Finding matching jobs...");
 
-      // 2) Send skills/quals to /api/match-jobs with top_n = 10 (for the 10/50 test)
       const matchRes = await fetch("http://127.0.0.1:5000/api/match-jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -113,8 +111,7 @@ export default function Uploader() {
           matchData.metadata;
 
         setStatus(
-          `CV parsed successfully. From ${total_jobs_loaded} jobs, ` +
-            `${jobs_with_matches} had at least one match. Showing top ${top_n}.`
+          `CV parsed successfully. From ${total_jobs_loaded} jobs, ${jobs_with_matches} had at least one match. Showing top ${top_n}.`
         );
       } else {
         setStatus(
@@ -183,15 +180,25 @@ export default function Uploader() {
     return result;
   }, [jobs, sortBy, industryFilter, locationFilter]);
 
+  const averageMatchRate =
+    filteredJobs.length > 0
+      ? Math.round(
+          filteredJobs.reduce(
+            (sum, job) => sum + (job.match_percentage || 0),
+            0
+          ) / filteredJobs.length
+        )
+      : 0;
+
   return (
     <div className="dashboard-root">
-      {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-top">
           <button className="icon-btn" title="Notifications">
             🔔
           </button>
         </div>
+
         <nav className="sidebar-nav">
           <button className="nav-link active">Dashboard</button>
           <button className="nav-link">Saved Jobs</button>
@@ -200,9 +207,7 @@ export default function Uploader() {
         </nav>
       </aside>
 
-      {/* Main content */}
       <main className="main">
-        {/* Top navigation / brand */}
         <header className="topbar">
           <div className="brand">
             <Image
@@ -228,46 +233,50 @@ export default function Uploader() {
           </div>
         </header>
 
-        {/* Stat cards */}
+        <section className="hero-row">
+          <div>
+            <p className="eyebrow">AI-powered job matching</p>
+            <h1 className="page-title">Find clearer, smarter job matches</h1>
+            <p className="page-subtitle">
+              Upload a CV, extract skills, and compare against job listings with
+              visible match scores and skill-gap analysis.
+            </p>
+          </div>
+        </section>
+
         <section className="stats-row">
           <div className="stat-card">
             <div className="stat-icon">💼</div>
             <div className="stat-label">Jobs Applied</div>
             <div className="stat-value">0</div>
           </div>
+
           <div className="stat-card">
             <div className="stat-icon">❤️</div>
             <div className="stat-label">Saved Jobs</div>
             <div className="stat-value">0</div>
           </div>
+
           <div className="stat-card">
             <div className="stat-icon">✅</div>
             <div className="stat-label">Interviews</div>
             <div className="stat-value">0</div>
           </div>
-          <div className="stat-card">
+
+          <div className="stat-card highlight">
             <div className="stat-icon">📈</div>
             <div className="stat-label">Match Rate</div>
-            <div className="stat-value">
-              {filteredJobs.length > 0
-                ? `${Math.round(
-                    filteredJobs.reduce(
-                      (sum, job) => sum + (job.match_percentage || 0),
-                      0
-                    ) / filteredJobs.length
-                  )}%`
-                : "0%"}
-            </div>
+            <div className="stat-value">{averageMatchRate}%</div>
           </div>
         </section>
 
-        {/* Upload + preview area */}
         <section className="upload-section">
-          {/* Left: upload card */}
           <div className="upload-card">
-            <div className="upload-title">
-              <span className="upload-icon">📁</span>
-              <h3>Upload CV</h3>
+            <div className="section-head">
+              <div>
+                <p className="section-kicker">Start here</p>
+                <h3>Upload CV</h3>
+              </div>
             </div>
 
             <label className="dropzone">
@@ -282,7 +291,7 @@ export default function Uploader() {
                   Drag and drop CV here or click to browse
                 </div>
                 <div className="drop-sub">
-                  Supported formats: PDF, DOCX, TXT (Max 5MB)
+                  Supported formats: PDF, DOCX, TXT
                 </div>
               </div>
             </label>
@@ -291,6 +300,7 @@ export default function Uploader() {
               <div className="selected-file">
                 {fileName ? `Selected: ${fileName}` : "No file selected"}
               </div>
+
               <button className="btn-primary" onClick={handleUpload}>
                 Upload &amp; Find Matching Jobs
               </button>
@@ -300,38 +310,51 @@ export default function Uploader() {
 
             {azureBlobUrl && (
               <div className="azure">
-                <strong>Stored in Azure:</strong>{" "}
+                <span className="azure-label">Stored in Azure</span>
                 <a
                   href={azureBlobUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  {azureBlobUrl}
+                  View uploaded file
                 </a>
               </div>
             )}
           </div>
 
-          {/* Right: preview + skills */}
           <div className="preview-column">
             <div className="preview-card">
-              <h4>CV Preview</h4>
+              <div className="section-head compact">
+                <div>
+                  <p className="section-kicker">Preview</p>
+                  <h4>CV Content</h4>
+                </div>
+              </div>
+
               <div className="preview-text">
                 {preview || "Upload a CV to see a text preview here."}
               </div>
             </div>
 
             <div className="skills-card">
-              <h4>Extracted Skills &amp; Qualifications</h4>
+              <div className="section-head compact">
+                <div>
+                  <p className="section-kicker">Extracted data</p>
+                  <h4>Skills & Qualifications</h4>
+                </div>
+              </div>
+
               <div className="chips">
                 {skills.length === 0 && qualifications.length === 0 && (
                   <div className="chip-empty">No skills detected yet</div>
                 )}
+
                 {skills.map((s, i) => (
                   <span key={`s-${i}`} className="chip chip-orange">
                     {s}
                   </span>
                 ))}
+
                 {qualifications.map((q, i) => (
                   <span key={`q-${i}`} className="chip chip-blue">
                     {q}
@@ -342,48 +365,29 @@ export default function Uploader() {
           </div>
         </section>
 
-        {/* Recommended jobs */}
         {jobs.length > 0 && (
           <section className="jobs-section">
             <div className="jobs-card">
-              <h4>Recommended Jobs ({filteredJobs.length})</h4>
-
-              {jobStats && (
-                <p className="jobs-meta">
-                  Testing summary: loaded{" "}
-                  <strong>{jobStats.total_jobs_loaded}</strong> jobs;{" "}
-                  <strong>{jobStats.jobs_with_matches}</strong> had at least one
-                  match. Showing top <strong>{jobStats.top_n}</strong>.
-                </p>
-              )}
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: "12px",
-                  flexWrap: "wrap",
-                  marginBottom: "20px",
-                }}
-              >
+              <div className="jobs-header">
                 <div>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: "14px",
-                      marginBottom: "6px",
-                    }}
-                  >
-                    Sort by
-                  </label>
+                  <p className="section-kicker">Recommendations</p>
+                  <h4>Recommended Jobs ({filteredJobs.length})</h4>
+                </div>
+
+                {jobStats && (
+                  <div className="summary-pill">
+                    {jobStats.total_jobs_loaded} loaded •{" "}
+                    {jobStats.jobs_with_matches} matched • top {jobStats.top_n}
+                  </div>
+                )}
+              </div>
+
+              <div className="filter-controls">
+                <div className="filter-group">
+                  <label>Sort by</label>
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value)}
-                    style={{
-                      padding: "10px",
-                      borderRadius: "8px",
-                      border: "1px solid #ddd",
-                      backgroundColor: "#fff",
-                    }}
                   >
                     <option value="match_percentage">Match Percentage</option>
                     <option value="total_score">Total Score</option>
@@ -391,25 +395,11 @@ export default function Uploader() {
                   </select>
                 </div>
 
-                <div>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: "14px",
-                      marginBottom: "6px",
-                    }}
-                  >
-                    Filter by industry
-                  </label>
+                <div className="filter-group">
+                  <label>Industry</label>
                   <select
                     value={industryFilter}
                     onChange={(e) => setIndustryFilter(e.target.value)}
-                    style={{
-                      padding: "10px",
-                      borderRadius: "8px",
-                      border: "1px solid #ddd",
-                      backgroundColor: "#fff",
-                    }}
                   >
                     {industries.map((industry) => (
                       <option key={industry} value={industry}>
@@ -419,25 +409,11 @@ export default function Uploader() {
                   </select>
                 </div>
 
-                <div>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: "14px",
-                      marginBottom: "6px",
-                    }}
-                  >
-                    Filter by location
-                  </label>
+                <div className="filter-group filter-wide">
+                  <label>Location</label>
                   <select
                     value={locationFilter}
                     onChange={(e) => setLocationFilter(e.target.value)}
-                    style={{
-                      padding: "10px",
-                      borderRadius: "8px",
-                      border: "1px solid #ddd",
-                      backgroundColor: "#fff",
-                    }}
                   >
                     {locations.map((location) => (
                       <option key={location} value={location}>
@@ -451,28 +427,50 @@ export default function Uploader() {
               <div className="jobs-list">
                 {filteredJobs.map((job, idx) => (
                   <div className="job-item" key={idx}>
-                    <div className="job-title">
-                      {job.title || job.job_title || "Untitled role"}
+                    <div className="job-top">
+                      <div>
+                        <div className="job-title">
+                          {job.title || job.job_title || "Untitled role"}
+                        </div>
+
+                        <div className="job-meta">
+                          {job.company && <span>{job.company}</span>}
+                          {job.location && <span> • {job.location}</span>}
+                          {job.industry && <span> • {job.industry}</span>}
+                        </div>
+                      </div>
+
+                      <div className="match-badge">
+                        {job.match_percentage || 0}% Match
+                      </div>
                     </div>
 
-                    <div className="job-meta">
-                      {job.company && <span>{job.company}</span>}
-                      {job.location && <span> • {job.location}</span>}
-                      {job.industry && <span> • {job.industry}</span>}
+                    <div className="job-score-row">
+                      {typeof job.total_score !== "undefined" && (
+                        <div className="job-score">
+                          Score {job.total_score}
+                        </div>
+                      )}
+
+                      {typeof job.skill_score !== "undefined" && (
+                        <div className="job-score muted">
+                          Skills {job.skill_score}
+                        </div>
+                      )}
+
+                      {typeof job.qual_score !== "undefined" && (
+                        <div className="job-score muted">
+                          Qualifications {job.qual_score}
+                        </div>
+                      )}
                     </div>
 
-                    {typeof job.total_score !== "undefined" && (
-                      <div className="job-score">
-                        Match score: {job.total_score} (skills {job.skill_score}{" "}
-                        / quals {job.qual_score})
-                      </div>
-                    )}
-
-                    {typeof job.match_percentage !== "undefined" && (
-                      <div className="job-score">
-                        Match percentage: {job.match_percentage}%
-                      </div>
-                    )}
+                    <div className="progress-track">
+                      <div
+                        className="progress-bar"
+                        style={{ width: `${job.match_percentage || 0}%` }}
+                      />
+                    </div>
 
                     {Array.isArray(job.matched_skills) &&
                       job.matched_skills.length > 0 && (
@@ -518,7 +516,7 @@ export default function Uploader() {
                             {job.missing_qualifications.map((qual, qualIdx) => (
                               <span
                                 key={`missing-qual-${idx}-${qualIdx}`}
-                                className="chip chip-blue"
+                                className="chip chip-neutral"
                               >
                                 {qual}
                               </span>
