@@ -41,7 +41,6 @@ export default function RegisterPage() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="brand auth-brand">
-          <Image src={justwork} alt="Just Apply logo" width={28} height={28} />
           <div className="brand-name">Just Apply</div>
         </div>
 
