@@ -176,12 +176,12 @@ def get_db_connection():
 
     return pyodbc.connect(
         f"DRIVER={{{driver}}};"
-        f"SERVER={AZURE_SQL_SERVER};"
+        f"SERVER=tcp:{AZURE_SQL_SERVER},1433;"
         f"DATABASE={AZURE_SQL_DATABASE};"
         f"UID={AZURE_SQL_USERNAME};"
         f"PWD={AZURE_SQL_PASSWORD};"
         "Encrypt=yes;"
-        "TrustServerCertificate=no;"
+        "TrustServerCertificate=yes;"
         "Connection Timeout=30;"
     )
 
