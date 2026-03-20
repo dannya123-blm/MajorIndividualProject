@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -15,21 +15,29 @@ from flasgger import Swagger
 from azure.storage.blob import BlobServiceClient
 from azure.core.exceptions import ResourceNotFoundError
 from dotenv import load_dotenv
-
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_jwt_extended import (
+    JWTManager,
+    create_access_token,
+    get_jwt_identity,
+    jwt_required,
+    set_access_cookies,
+    unset_jwt_cookies,
+)
+import pyodbc
 import pandas as pd
 
 load_dotenv()
 
 AZURE_CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
 AZURE_CONTAINER = os.getenv("AZURE_CONTAINER_NAME", "cv-uploads")
-AZURE_SAVED_JOBS_CONTAINER = os.getenv(
-    "AZURE_SAVED_JOBS_CONTAINER_NAME",
-    "saved-jobs"
-)
-SAVED_JOBS_BLOB_NAME = os.getenv(
-    "AZURE_SAVED_JOBS_BLOB_NAME",
-    "saved-jobs.json"
-)
+AZURE_SAVED_JOBS_CONTAINER = os.getenv("AZURE_SAVED_JOBS_CONTAINER_NAME", "saved-jobs")
+SAVED_JOBS_BLOB_NAME = os.getenv("AZURE_SAVED_JOBS_BLOB_NAME", "saved-jobs.json")
+
+AZURE_SQL_SERVER = os.getenv("AZURE_SQL_SERVER")
+AZURE_SQL_DATABASE = os.getenv("AZURE_SQL_DATABASE")
+AZURE_SQL_USERNAME = os.getenv("AZURE_SQL_USERNAME")
+AZURE_SQL_PASSWORD = os.getenv("AZURE_SQL_PASSWORD")
 
 blob_service_client = None
 cv_container_client = None
@@ -50,23 +58,29 @@ else:
     )
 
 app = Flask(__name__)
-CORS(app)
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-change-me")
+app.config["JWT_TOKEN_LOCATION"] = ["cookies"]
+app.config["JWT_COOKIE_SECURE"] = False
+app.config["JWT_COOKIE_SAMESITE"] = "Lax"
+app.config["JWT_COOKIE_CSRF_PROTECT"] = False
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=1)
+
+CORS(app, supports_credentials=True, origins=["http://localhost:3000", "http://127.0.0.1:3000"])
+jwt = JWTManager(app)
 
 swagger = Swagger(app, template={
     "info": {
         "title": "Just Apply API",
-        "description": "API for CV upload, NLP skill extraction, job matching, and saved jobs.",
-        "version": "1.1.0"
+        "description": "API for CV upload, NLP skill extraction, job matching, saved jobs, and authentication.",
+        "version": "2.0.0"
     }
 })
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 LOCAL_SAVED_JOBS_PATH = os.path.join(BASE_DIR, "saved_jobs.json")
-
 JOB_CSV_PATH = os.path.join(BASE_DIR, "jobPosts", "jobposts.csv")
 
 print("Looking for jobposts.csv at:", JOB_CSV_PATH)
@@ -129,6 +143,41 @@ QUALIFICATION_KEYWORDS = [
     "aws certified", "azure certification", "oracle certified",
     "microsoft certified", "ccna", "comptia",
 ]
+
+
+def get_db_connection():
+    return pyodbc.connect(
+        "DRIVER={ODBC Driver 17 for SQL Server};"
+        f"SERVER={AZURE_SQL_SERVER};"
+        f"DATABASE={AZURE_SQL_DATABASE};"
+        f"UID={AZURE_SQL_USERNAME};"
+        f"PWD={AZURE_SQL_PASSWORD};"
+        "Encrypt=yes;"
+        "TrustServerCertificate=no;"
+        "Connection Timeout=30;"
+    )
+
+
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    IF NOT EXISTS (
+        SELECT * FROM sysobjects WHERE name='users' AND xtype='U'
+    )
+    CREATE TABLE users (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        name NVARCHAR(255) NOT NULL,
+        email NVARCHAR(255) UNIQUE NOT NULL,
+        password_hash NVARCHAR(255) NOT NULL,
+        created_at DATETIME DEFAULT GETDATE()
+    )
+    """)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 
 def normalize_tokens(text: str) -> list[str]:
@@ -262,27 +311,140 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 
+@app.route("/api/register", methods=["POST"])
+def register():
+    data = request.get_json(silent=True) or {}
+
+    name = str(data.get("name", "")).strip()
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", "")).strip()
+
+    if not name or not email or not password:
+        return jsonify({"error": "Name, email, and password are required"}), 400
+
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+
+    password_hash = generate_password_hash(password)
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+            (name, email, password_hash)
+        )
+
+        conn.commit()
+
+        cursor.execute(
+            "SELECT id, name, email FROM users WHERE email = ?",
+            (email,)
+        )
+        user = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        access_token = create_access_token(identity=email)
+        response = jsonify({
+            "message": "User registered successfully",
+            "user": {
+                "id": user[0],
+                "name": user[1],
+                "email": user[2]
+            }
+        })
+        set_access_cookies(response, access_token)
+        return response, 201
+
+    except Exception:
+        return jsonify({"error": "User already exists or registration failed"}), 400
+
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True) or {}
+
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", "")).strip()
+
+    if not email or not password:
+        return jsonify({"error": "Email and password are required"}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id, name, email, password_hash FROM users WHERE email = ?",
+        (email,)
+    )
+    user = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if not user:
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    user_id, name, user_email, password_hash = user
+
+    if not check_password_hash(password_hash, password):
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    access_token = create_access_token(identity=user_email)
+    response = jsonify({
+        "message": "Login successful",
+        "user": {
+            "id": user_id,
+            "name": name,
+            "email": user_email
+        }
+    })
+    set_access_cookies(response, access_token)
+    return response, 200
+
+
+@app.route("/api/me", methods=["GET"])
+@jwt_required()
+def me():
+    email = get_jwt_identity()
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id, name, email FROM users WHERE email = ?",
+        (email,)
+    )
+    user = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    return jsonify({
+        "user": {
+            "id": user[0],
+            "name": user[1],
+            "email": user[2]
+        }
+    }), 200
+
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    response = jsonify({"message": "Logged out"})
+    unset_jwt_cookies(response)
+    return response, 200
+
+
 @app.route("/api/upload-cv", methods=["POST"])
+@jwt_required()
 def upload_and_parse_cv():
-    """
-    Upload a CV and extract skills
-    ---
-    tags:
-      - CV Processing
-    consumes:
-      - multipart/form-data
-    parameters:
-      - name: file
-        in: formData
-        type: file
-        required: true
-        description: CV file (PDF or DOCX)
-    responses:
-      201:
-        description: CV successfully processed
-      400:
-        description: Invalid file upload
-    """
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -327,37 +489,8 @@ def upload_and_parse_cv():
 
 
 @app.route("/api/match-jobs", methods=["POST"])
+@jwt_required()
 def match_jobs():
-    """
-    Match extracted skills and qualifications against job posts
-    ---
-    tags:
-      - Job Matching
-    consumes:
-      - application/json
-    parameters:
-      - in: body
-        name: body
-        required: true
-        schema:
-          type: object
-          properties:
-            skills:
-              type: array
-              items:
-                type: string
-            qualifications:
-              type: array
-              items:
-                type: string
-            top_n:
-              type: integer
-    responses:
-      200:
-        description: Matching job results returned
-      500:
-        description: Job dataset not loaded
-    """
     global job_df
     if job_df is None:
         return jsonify({"error": "Job dataset not loaded on server"}), 500
@@ -480,22 +613,11 @@ def match_jobs():
 
 
 @app.route("/api/save-job", methods=["POST"])
+@jwt_required()
 def save_job():
-    """
-    Save a recommended job
-    ---
-    tags:
-      - Saved Jobs
-    consumes:
-      - application/json
-    responses:
-      201:
-        description: Job saved
-      200:
-        description: Job already saved
-    """
     data = request.get_json(silent=True) or {}
     job = data.get("job")
+    user_email = get_jwt_identity()
 
     if not isinstance(job, dict):
         return jsonify({"error": "No job provided"}), 400
@@ -513,67 +635,61 @@ def save_job():
         job_id = f"job-{len(saved_jobs) + 1}"
 
     for existing in saved_jobs:
-        if existing.get("job_id") == job_id:
+        if existing.get("job_id") == job_id and existing.get("user_email") == user_email:
             return jsonify({
                 "message": "Job already saved",
-                "saved_jobs": saved_jobs
+                "saved_jobs": [j for j in saved_jobs if j.get("user_email") == user_email]
             }), 200
 
     job["job_id"] = job_id
+    job["user_email"] = user_email
     job["saved_at"] = datetime.now().isoformat()
 
     saved_jobs.append(job)
     save_saved_jobs(saved_jobs)
 
+    user_saved_jobs = [j for j in saved_jobs if j.get("user_email") == user_email]
+
     return jsonify({
         "message": "Job saved successfully",
-        "saved_jobs": saved_jobs
+        "saved_jobs": user_saved_jobs
     }), 201
 
 
 @app.route("/api/saved-jobs", methods=["GET"])
+@jwt_required()
 def get_saved_jobs():
-    """
-    Get all saved jobs
-    ---
-    tags:
-      - Saved Jobs
-    responses:
-      200:
-        description: Saved jobs returned
-    """
+    user_email = get_jwt_identity()
     saved_jobs = load_saved_jobs()
+    saved_jobs = [job for job in saved_jobs if job.get("user_email") == user_email]
     return jsonify({"saved_jobs": saved_jobs}), 200
 
 
 @app.route("/api/remove-saved-job", methods=["POST"])
+@jwt_required()
 def remove_saved_job():
-    """
-    Remove a saved job
-    ---
-    tags:
-      - Saved Jobs
-    consumes:
-      - application/json
-    responses:
-      200:
-        description: Job removed
-    """
     data = request.get_json(silent=True) or {}
     job_id = data.get("job_id")
+    user_email = get_jwt_identity()
 
     if not job_id:
         return jsonify({"error": "job_id is required"}), 400
 
     saved_jobs = load_saved_jobs()
-    saved_jobs = [job for job in saved_jobs if job.get("job_id") != job_id]
+    saved_jobs = [
+        job for job in saved_jobs
+        if not (job.get("job_id") == job_id and job.get("user_email") == user_email)
+    ]
     save_saved_jobs(saved_jobs)
+
+    user_saved_jobs = [j for j in saved_jobs if j.get("user_email") == user_email]
 
     return jsonify({
         "message": "Job removed",
-        "saved_jobs": saved_jobs
+        "saved_jobs": user_saved_jobs
     }), 200
 
 
 if __name__ == "__main__":
+    init_db()
     app.run(debug=True)
