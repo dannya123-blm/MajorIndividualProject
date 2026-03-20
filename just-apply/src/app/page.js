@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import justwork from "../images/justwork.png";
 
@@ -14,9 +14,24 @@ export default function Uploader() {
   const [azureBlobUrl, setAzureBlobUrl] = useState("");
   const [jobs, setJobs] = useState([]);
   const [jobStats, setJobStats] = useState(null);
+  const [savedJobs, setSavedJobs] = useState([]);
   const [sortBy, setSortBy] = useState("match_percentage");
   const [industryFilter, setIndustryFilter] = useState("All");
   const [locationFilter, setLocationFilter] = useState("All");
+
+  const fetchSavedJobs = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/saved-jobs");
+      const data = await res.json();
+      setSavedJobs(data.saved_jobs || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    fetchSavedJobs();
+  }, []);
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -84,7 +99,7 @@ export default function Uploader() {
         return;
       }
 
-      const returnedJobs = (matchData.jobs || []).map((job) => {
+      const returnedJobs = (matchData.jobs || []).map((job, index) => {
         const matchedCount = Array.isArray(job.matched_skills)
           ? job.matched_skills.length
           : 0;
@@ -99,6 +114,12 @@ export default function Uploader() {
 
         return {
           ...job,
+          job_id:
+            job.job_id ||
+            job.id ||
+            job.title ||
+            job.job_title ||
+            `job-${index + 1}`,
           match_percentage: matchPercentage,
         };
       });
@@ -122,6 +143,40 @@ export default function Uploader() {
       console.error(err);
       setStatus("Error: could not connect to backend.");
     }
+  };
+
+  const saveJob = async (job) => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/save-job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job }),
+      });
+
+      const data = await res.json();
+      setSavedJobs(data.saved_jobs || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const removeSavedJob = async (jobId) => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/remove-saved-job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: jobId }),
+      });
+
+      const data = await res.json();
+      setSavedJobs(data.saved_jobs || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const isJobSaved = (jobId) => {
+    return savedJobs.some((job) => job.job_id === jobId);
   };
 
   const industries = useMemo(() => {
@@ -257,7 +312,7 @@ export default function Uploader() {
             <h1 className="page-title">Find clearer, smarter job matches</h1>
             <p className="page-subtitle">
               Upload a CV, extract skills, and compare against job listings with
-              visible match scores and skill-gap analysis.
+              visible match scores, saved jobs, and skill-gap analysis.
             </p>
           </div>
         </section>
@@ -272,7 +327,7 @@ export default function Uploader() {
           <div className="stat-card">
             <div className="stat-icon">❤️</div>
             <div className="stat-label">Saved Jobs</div>
-            <div className="stat-value">0</div>
+            <div className="stat-value">{savedJobs.length}</div>
           </div>
 
           <div className="stat-card">
@@ -382,6 +437,50 @@ export default function Uploader() {
             </div>
           </div>
         </section>
+
+        {savedJobs.length > 0 && (
+          <section className="jobs-section">
+            <div className="jobs-card">
+              <div className="jobs-header">
+                <div>
+                  <p className="section-kicker">Bookmarks</p>
+                  <h4>Saved Jobs ({savedJobs.length})</h4>
+                </div>
+              </div>
+
+              <div className="jobs-list">
+                {savedJobs.map((job, idx) => (
+                  <div className="job-item" key={idx}>
+                    <div className="job-top">
+                      <div>
+                        <div className="job-title">
+                          {job.title || job.job_title || "Untitled role"}
+                        </div>
+
+                        <div className="job-meta">
+                          {job.company && <span>{job.company}</span>}
+                          {job.location && <span> • {job.location}</span>}
+                          {job.industry && <span> • {job.industry}</span>}
+                        </div>
+                      </div>
+
+                      <div className="match-badge">Saved</div>
+                    </div>
+
+                    <div className="job-score-row">
+                      <button
+                        className="btn-primary"
+                        onClick={() => removeSavedJob(job.job_id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
 
         {topMissingSkills.length > 0 && (
           <section className="insights-section">
@@ -506,6 +605,14 @@ export default function Uploader() {
                           Qualifications {job.qual_score}
                         </div>
                       )}
+
+                      <button
+                        className="btn-primary"
+                        onClick={() => saveJob(job)}
+                        disabled={isJobSaved(job.job_id)}
+                      >
+                        {isJobSaved(job.job_id) ? "Saved" : "Save Job"}
+                      </button>
                     </div>
 
                     <div className="progress-track">

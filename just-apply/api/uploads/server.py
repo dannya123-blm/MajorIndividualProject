@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime
 
 from flask import Flask, request, jsonify
@@ -12,6 +13,7 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from flasgger import Swagger
 from azure.storage.blob import BlobServiceClient
+from azure.core.exceptions import ResourceNotFoundError
 from dotenv import load_dotenv
 
 import pandas as pd
@@ -20,15 +22,27 @@ load_dotenv()
 
 AZURE_CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
 AZURE_CONTAINER = os.getenv("AZURE_CONTAINER_NAME", "cv-uploads")
+AZURE_SAVED_JOBS_CONTAINER = os.getenv(
+    "AZURE_SAVED_JOBS_CONTAINER_NAME",
+    "saved-jobs"
+)
+SAVED_JOBS_BLOB_NAME = os.getenv(
+    "AZURE_SAVED_JOBS_BLOB_NAME",
+    "saved-jobs.json"
+)
 
 blob_service_client = None
-container_client = None
+cv_container_client = None
+saved_jobs_container_client = None
 
 if AZURE_CONNECTION_STRING:
     blob_service_client = BlobServiceClient.from_connection_string(
         AZURE_CONNECTION_STRING
     )
-    container_client = blob_service_client.get_container_client(AZURE_CONTAINER)
+    cv_container_client = blob_service_client.get_container_client(AZURE_CONTAINER)
+    saved_jobs_container_client = blob_service_client.get_container_client(
+        AZURE_SAVED_JOBS_CONTAINER
+    )
 else:
     print(
         "WARNING: AZURE_CONNECTION_STRING not set. "
@@ -41,8 +55,8 @@ CORS(app)
 swagger = Swagger(app, template={
     "info": {
         "title": "Just Apply API",
-        "description": "API for CV upload, NLP skill extraction, and job matching.",
-        "version": "1.0.0"
+        "description": "API for CV upload, NLP skill extraction, job matching, and saved jobs.",
+        "version": "1.1.0"
     }
 })
 
@@ -50,6 +64,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+LOCAL_SAVED_JOBS_PATH = os.path.join(BASE_DIR, "saved_jobs.json")
 
 JOB_CSV_PATH = os.path.join(BASE_DIR, "jobPosts", "jobposts.csv")
 
@@ -160,19 +176,58 @@ def extract_qualifications(text: str) -> list[str]:
 
 
 def upload_cv_to_azure(file_path: str, blob_name: str) -> str | None:
-    if container_client is None:
-        print("Azure container client not configured. Skipping upload.")
+    if cv_container_client is None:
+        print("Azure CV container client not configured. Skipping upload.")
         return None
 
     with open(file_path, "rb") as data:
-        container_client.upload_blob(
+        cv_container_client.upload_blob(
             name=blob_name,
             data=data,
             overwrite=True,
         )
 
-    blob_client = container_client.get_blob_client(blob_name)
+    blob_client = cv_container_client.get_blob_client(blob_name)
     return blob_client.url
+
+
+def load_saved_jobs() -> list[dict]:
+    if saved_jobs_container_client is not None:
+        try:
+            blob_client = saved_jobs_container_client.get_blob_client(
+                SAVED_JOBS_BLOB_NAME
+            )
+            blob_data = blob_client.download_blob().readall()
+            return json.loads(blob_data.decode("utf-8"))
+        except ResourceNotFoundError:
+            return []
+        except Exception as e:
+            print("Azure saved jobs load error:", e)
+            return []
+
+    if os.path.exists(LOCAL_SAVED_JOBS_PATH):
+        try:
+            with open(LOCAL_SAVED_JOBS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+
+    return []
+
+
+def save_saved_jobs(jobs: list[dict]) -> None:
+    if saved_jobs_container_client is not None:
+        blob_client = saved_jobs_container_client.get_blob_client(
+            SAVED_JOBS_BLOB_NAME
+        )
+        blob_client.upload_blob(
+            json.dumps(jobs, ensure_ascii=False, indent=2),
+            overwrite=True
+        )
+        return
+
+    with open(LOCAL_SAVED_JOBS_PATH, "w", encoding="utf-8") as f:
+        json.dump(jobs, f, ensure_ascii=False, indent=2)
 
 
 def extract_text_from_pdf(path: str) -> str:
@@ -225,33 +280,6 @@ def upload_and_parse_cv():
     responses:
       201:
         description: CV successfully processed
-        schema:
-          type: object
-          properties:
-            message:
-              type: string
-            original_name:
-              type: string
-            skills:
-              type: array
-              items:
-                type: string
-            qualifications:
-              type: array
-              items:
-                type: string
-            text_preview:
-              type: string
-            azure_blob_url:
-              type: string
-        examples:
-          application/json:
-            message: CV uploaded & parsed successfully (NLTK)
-            original_name: cv.pdf
-            skills: ["python", "sql"]
-            qualifications: ["bachelor"]
-            text_preview: Extracted CV text preview
-            azure_blob_url: https://example.blob.core.windows.net/cv-uploads/cv.pdf
       400:
         description: Invalid file upload
     """
@@ -318,36 +346,15 @@ def match_jobs():
               type: array
               items:
                 type: string
-              example: ["python", "django"]
             qualifications:
               type: array
               items:
                 type: string
-              example: ["bachelor"]
             top_n:
               type: integer
-              example: 10
     responses:
       200:
         description: Matching job results returned
-        schema:
-          type: object
-          properties:
-            jobs:
-              type: array
-              items:
-                type: object
-            metadata:
-              type: object
-              properties:
-                total_jobs_loaded:
-                  type: integer
-                jobs_with_matches:
-                  type: integer
-                top_n:
-                  type: integer
-                match_coverage_ratio:
-                  type: number
       500:
         description: Job dataset not loaded
     """
@@ -469,6 +476,102 @@ def match_jobs():
             "top_n": int(top_n),
             "match_coverage_ratio": jobs_with_matches / float(len(job_df)),
         },
+    }), 200
+
+
+@app.route("/api/save-job", methods=["POST"])
+def save_job():
+    """
+    Save a recommended job
+    ---
+    tags:
+      - Saved Jobs
+    consumes:
+      - application/json
+    responses:
+      201:
+        description: Job saved
+      200:
+        description: Job already saved
+    """
+    data = request.get_json(silent=True) or {}
+    job = data.get("job")
+
+    if not isinstance(job, dict):
+        return jsonify({"error": "No job provided"}), 400
+
+    saved_jobs = load_saved_jobs()
+
+    job_id = (
+        job.get("job_id")
+        or job.get("id")
+        or job.get("title")
+        or job.get("job_title")
+    )
+
+    if not job_id:
+        job_id = f"job-{len(saved_jobs) + 1}"
+
+    for existing in saved_jobs:
+        if existing.get("job_id") == job_id:
+            return jsonify({
+                "message": "Job already saved",
+                "saved_jobs": saved_jobs
+            }), 200
+
+    job["job_id"] = job_id
+    job["saved_at"] = datetime.now().isoformat()
+
+    saved_jobs.append(job)
+    save_saved_jobs(saved_jobs)
+
+    return jsonify({
+        "message": "Job saved successfully",
+        "saved_jobs": saved_jobs
+    }), 201
+
+
+@app.route("/api/saved-jobs", methods=["GET"])
+def get_saved_jobs():
+    """
+    Get all saved jobs
+    ---
+    tags:
+      - Saved Jobs
+    responses:
+      200:
+        description: Saved jobs returned
+    """
+    saved_jobs = load_saved_jobs()
+    return jsonify({"saved_jobs": saved_jobs}), 200
+
+
+@app.route("/api/remove-saved-job", methods=["POST"])
+def remove_saved_job():
+    """
+    Remove a saved job
+    ---
+    tags:
+      - Saved Jobs
+    consumes:
+      - application/json
+    responses:
+      200:
+        description: Job removed
+    """
+    data = request.get_json(silent=True) or {}
+    job_id = data.get("job_id")
+
+    if not job_id:
+        return jsonify({"error": "job_id is required"}), 400
+
+    saved_jobs = load_saved_jobs()
+    saved_jobs = [job for job in saved_jobs if job.get("job_id") != job_id]
+    save_saved_jobs(saved_jobs)
+
+    return jsonify({
+        "message": "Job removed",
+        "saved_jobs": saved_jobs
     }), 200
 
 
