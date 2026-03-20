@@ -31,8 +31,14 @@ load_dotenv()
 
 AZURE_CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
 AZURE_CONTAINER = os.getenv("AZURE_CONTAINER_NAME", "cv-uploads")
-AZURE_SAVED_JOBS_CONTAINER = os.getenv("AZURE_SAVED_JOBS_CONTAINER_NAME", "saved-jobs")
-SAVED_JOBS_BLOB_NAME = os.getenv("AZURE_SAVED_JOBS_BLOB_NAME", "saved-jobs.json")
+AZURE_SAVED_JOBS_CONTAINER = os.getenv(
+    "AZURE_SAVED_JOBS_CONTAINER_NAME",
+    "saved-jobs"
+)
+SAVED_JOBS_BLOB_NAME = os.getenv(
+    "AZURE_SAVED_JOBS_BLOB_NAME",
+    "saved-jobs.json"
+)
 
 AZURE_SQL_SERVER = os.getenv("AZURE_SQL_SERVER")
 AZURE_SQL_DATABASE = os.getenv("AZURE_SQL_DATABASE")
@@ -65,7 +71,12 @@ app.config["JWT_COOKIE_SAMESITE"] = "Lax"
 app.config["JWT_COOKIE_CSRF_PROTECT"] = False
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=1)
 
-CORS(app, supports_credentials=True, origins=["http://localhost:3000", "http://127.0.0.1:3000"])
+CORS(
+    app,
+    supports_credentials=True,
+    origins=["http://localhost:3000", "http://127.0.0.1:3000"]
+)
+
 jwt = JWTManager(app)
 
 swagger = Swagger(app, template={
@@ -145,9 +156,26 @@ QUALIFICATION_KEYWORDS = [
 ]
 
 
+def get_sql_driver():
+    available = pyodbc.drivers()
+
+    if "ODBC Driver 18 for SQL Server" in available:
+        return "ODBC Driver 18 for SQL Server"
+
+    if "ODBC Driver 17 for SQL Server" in available:
+        return "ODBC Driver 17 for SQL Server"
+
+    raise RuntimeError(
+        "No SQL Server ODBC driver found. Install Microsoft ODBC Driver 18 "
+        "or 17 for SQL Server, then run: python -c \"import pyodbc; print(pyodbc.drivers())\""
+    )
+
+
 def get_db_connection():
+    driver = get_sql_driver()
+
     return pyodbc.connect(
-        "DRIVER={ODBC Driver 17 for SQL Server};"
+        f"DRIVER={{{driver}}};"
         f"SERVER={AZURE_SQL_SERVER};"
         f"DATABASE={AZURE_SQL_DATABASE};"
         f"UID={AZURE_SQL_USERNAME};"
@@ -691,5 +719,6 @@ def remove_saved_job():
 
 
 if __name__ == "__main__":
+    print("Available ODBC drivers:", pyodbc.drivers())
     init_db()
     app.run(debug=True)
