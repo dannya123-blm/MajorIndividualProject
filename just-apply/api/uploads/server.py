@@ -165,9 +165,12 @@ def get_sql_driver():
     if "ODBC Driver 17 for SQL Server" in available:
         return "ODBC Driver 17 for SQL Server"
 
+    if "SQL Server" in available:
+        return "SQL Server"
+
     raise RuntimeError(
         "No SQL Server ODBC driver found. Install Microsoft ODBC Driver 18 "
-        "or 17 for SQL Server, then run: python -c \"import pyodbc; print(pyodbc.drivers())\""
+        "or 17 for SQL Server."
     )
 
 
@@ -189,25 +192,41 @@ def get_db_connection():
 
 
 def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-    cursor.execute("""
-    IF NOT EXISTS (
-        SELECT * FROM sysobjects WHERE name='users' AND xtype='U'
-    )
-    CREATE TABLE users (
-        id INT IDENTITY(1,1) PRIMARY KEY,
-        name NVARCHAR(255) NOT NULL,
-        email NVARCHAR(255) UNIQUE NOT NULL,
-        password_hash NVARCHAR(255) NOT NULL,
-        created_at DATETIME DEFAULT GETDATE()
-    )
-    """)
+        cursor.execute("""
+        IF NOT EXISTS (
+            SELECT * FROM sysobjects WHERE name='users' AND xtype='U'
+        )
+        CREATE TABLE users (
+            id INT IDENTITY(1,1) PRIMARY KEY,
+            name NVARCHAR(255) NOT NULL,
+            email NVARCHAR(255) UNIQUE NOT NULL,
+            password_hash NVARCHAR(255) NOT NULL,
+            created_at DATETIME DEFAULT GETDATE()
+        )
+        """)
 
-    conn.commit()
-    cursor.close()
-    conn.close()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("Azure SQL users table ready.")
+        return True
+    except Exception as e:
+        print("Azure SQL init failed:", e)
+        return False
+
+
+def db_available():
+    try:
+        conn = get_db_connection()
+        conn.close()
+        return True
+    except Exception as e:
+        print("Database unavailable:", e)
+        return False
 
 
 def normalize_tokens(text: str) -> list[str]:
@@ -355,6 +374,9 @@ def register():
     if len(password) < 6:
         return jsonify({"error": "Password must be at least 6 characters"}), 400
 
+    if not db_available():
+        return jsonify({"error": "Database connection failed"}), 500
+
     password_hash = generate_password_hash(password)
 
     try:
@@ -365,7 +387,6 @@ def register():
             "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
             (name, email, password_hash)
         )
-
         conn.commit()
 
         cursor.execute(
@@ -389,7 +410,8 @@ def register():
         set_access_cookies(response, access_token)
         return response, 201
 
-    except Exception:
+    except Exception as e:
+        print("Register error:", e)
         return jsonify({"error": "User already exists or registration failed"}), 400
 
 
@@ -403,37 +425,45 @@ def login():
     if not email or not password:
         return jsonify({"error": "Email and password are required"}), 400
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    if not db_available():
+        return jsonify({"error": "Database connection failed"}), 500
 
-    cursor.execute(
-        "SELECT id, name, email, password_hash FROM users WHERE email = ?",
-        (email,)
-    )
-    user = cursor.fetchone()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-    cursor.close()
-    conn.close()
+        cursor.execute(
+            "SELECT id, name, email, password_hash FROM users WHERE email = ?",
+            (email,)
+        )
+        user = cursor.fetchone()
 
-    if not user:
-        return jsonify({"error": "Invalid credentials"}), 401
+        cursor.close()
+        conn.close()
 
-    user_id, name, user_email, password_hash = user
+        if not user:
+            return jsonify({"error": "Invalid credentials"}), 401
 
-    if not check_password_hash(password_hash, password):
-        return jsonify({"error": "Invalid credentials"}), 401
+        user_id, name, user_email, password_hash = user
 
-    access_token = create_access_token(identity=user_email)
-    response = jsonify({
-        "message": "Login successful",
-        "user": {
-            "id": user_id,
-            "name": name,
-            "email": user_email
-        }
-    })
-    set_access_cookies(response, access_token)
-    return response, 200
+        if not check_password_hash(password_hash, password):
+            return jsonify({"error": "Invalid credentials"}), 401
+
+        access_token = create_access_token(identity=user_email)
+        response = jsonify({
+            "message": "Login successful",
+            "user": {
+                "id": user_id,
+                "name": name,
+                "email": user_email
+            }
+        })
+        set_access_cookies(response, access_token)
+        return response, 200
+
+    except Exception as e:
+        print("Login error:", e)
+        return jsonify({"error": "Login failed"}), 500
 
 
 @app.route("/api/me", methods=["GET"])
@@ -441,28 +471,35 @@ def login():
 def me():
     email = get_jwt_identity()
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    if not db_available():
+        return jsonify({"error": "Database connection failed"}), 500
 
-    cursor.execute(
-        "SELECT id, name, email FROM users WHERE email = ?",
-        (email,)
-    )
-    user = cursor.fetchone()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-    cursor.close()
-    conn.close()
+        cursor.execute(
+            "SELECT id, name, email FROM users WHERE email = ?",
+            (email,)
+        )
+        user = cursor.fetchone()
 
-    if not user:
-        return jsonify({"error": "User not found"}), 404
+        cursor.close()
+        conn.close()
 
-    return jsonify({
-        "user": {
-            "id": user[0],
-            "name": user[1],
-            "email": user[2]
-        }
-    }), 200
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        return jsonify({
+            "user": {
+                "id": user[0],
+                "name": user[1],
+                "email": user[2]
+            }
+        }), 200
+    except Exception as e:
+        print("Me error:", e)
+        return jsonify({"error": "Could not load user"}), 500
 
 
 @app.route("/api/logout", methods=["POST"])
@@ -473,7 +510,6 @@ def logout():
 
 
 @app.route("/api/upload-cv", methods=["POST"])
-@jwt_required()
 def upload_and_parse_cv():
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -519,7 +555,6 @@ def upload_and_parse_cv():
 
 
 @app.route("/api/match-jobs", methods=["POST"])
-@jwt_required()
 def match_jobs():
     global job_df
     if job_df is None:
@@ -643,11 +678,9 @@ def match_jobs():
 
 
 @app.route("/api/save-job", methods=["POST"])
-@jwt_required()
 def save_job():
     data = request.get_json(silent=True) or {}
     job = data.get("job")
-    user_email = get_jwt_identity()
 
     if not isinstance(job, dict):
         return jsonify({"error": "No job provided"}), 400
@@ -665,62 +698,53 @@ def save_job():
         job_id = f"job-{len(saved_jobs) + 1}"
 
     for existing in saved_jobs:
-        if existing.get("job_id") == job_id and existing.get("user_email") == user_email:
+        if existing.get("job_id") == job_id:
             return jsonify({
                 "message": "Job already saved",
-                "saved_jobs": [j for j in saved_jobs if j.get("user_email") == user_email]
+                "saved_jobs": saved_jobs
             }), 200
 
     job["job_id"] = job_id
-    job["user_email"] = user_email
     job["saved_at"] = datetime.now().isoformat()
 
     saved_jobs.append(job)
     save_saved_jobs(saved_jobs)
 
-    user_saved_jobs = [j for j in saved_jobs if j.get("user_email") == user_email]
-
     return jsonify({
         "message": "Job saved successfully",
-        "saved_jobs": user_saved_jobs
+        "saved_jobs": saved_jobs
     }), 201
 
 
 @app.route("/api/saved-jobs", methods=["GET"])
-@jwt_required()
 def get_saved_jobs():
-    user_email = get_jwt_identity()
     saved_jobs = load_saved_jobs()
-    saved_jobs = [job for job in saved_jobs if job.get("user_email") == user_email]
     return jsonify({"saved_jobs": saved_jobs}), 200
 
 
 @app.route("/api/remove-saved-job", methods=["POST"])
-@jwt_required()
 def remove_saved_job():
     data = request.get_json(silent=True) or {}
     job_id = data.get("job_id")
-    user_email = get_jwt_identity()
 
     if not job_id:
         return jsonify({"error": "job_id is required"}), 400
 
     saved_jobs = load_saved_jobs()
-    saved_jobs = [
-        job for job in saved_jobs
-        if not (job.get("job_id") == job_id and job.get("user_email") == user_email)
-    ]
+    saved_jobs = [job for job in saved_jobs if job.get("job_id") != job_id]
     save_saved_jobs(saved_jobs)
-
-    user_saved_jobs = [j for j in saved_jobs if j.get("user_email") == user_email]
 
     return jsonify({
         "message": "Job removed",
-        "saved_jobs": user_saved_jobs
+        "saved_jobs": saved_jobs
     }), 200
 
 
 if __name__ == "__main__":
+    print("SQL SERVER =", AZURE_SQL_SERVER)
+    print("SQL DATABASE =", AZURE_SQL_DATABASE)
+    print("SQL USER =", AZURE_SQL_USERNAME)
     print("Available ODBC drivers:", pyodbc.drivers())
+
     init_db()
     app.run(debug=True)

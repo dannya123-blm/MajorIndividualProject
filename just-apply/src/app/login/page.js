@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import justwork from "../images/justwork.png";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,32 +14,24 @@ export default function LoginPage() {
   const handleLogin = async () => {
     setStatus("");
 
-    try {
-      const res = await fetch("http://127.0.0.1:5000/api/login", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setStatus(data.error || "Login failed");
-        return;
-      }
-
-      router.push("/");
-    } catch (err) {
-      console.error(err);
-      setStatus("Could not connect to backend");
+    if (!email.trim() || !password.trim()) {
+      setStatus("Please enter email and password.");
+      return;
     }
+
+    router.push("/");
   };
 
   return (
     <div className="auth-page">
       <div className="auth-card">
         <div className="brand auth-brand">
+          <Image
+            src={justwork}
+            alt="Just Apply logo"
+            width={28}
+            height={28}
+          />
           <div className="brand-name">Just Apply</div>
         </div>
 

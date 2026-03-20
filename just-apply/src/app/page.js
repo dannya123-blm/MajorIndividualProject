@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import justwork from "../images/justwork.png";
 
 export default function Uploader() {
+  const router = useRouter();
+
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState("");
   const [status, setStatus] = useState("");
@@ -32,6 +35,10 @@ export default function Uploader() {
   useEffect(() => {
     fetchSavedJobs();
   }, []);
+
+  const handleLogout = () => {
+    router.push("/login");
+  };
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -276,7 +283,9 @@ export default function Uploader() {
           <button className="nav-link active">Dashboard</button>
           <button className="nav-link">Saved Jobs</button>
           <button className="nav-link">Profile</button>
-          <button className="nav-link">Sign Out</button>
+          <button className="nav-link" onClick={handleLogout}>
+            Sign Out
+          </button>
         </nav>
       </aside>
 
@@ -297,7 +306,9 @@ export default function Uploader() {
             <button className="topnav-item active">Dashboard</button>
             <button className="topnav-item">Saved Jobs</button>
             <button className="topnav-item">Profile</button>
-            <button className="topnav-item">Sign Out</button>
+            <button className="topnav-item" onClick={handleLogout}>
+              Sign Out
+            </button>
           </nav>
 
           <div className="user">
