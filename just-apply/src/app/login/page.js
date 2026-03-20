@@ -28,7 +28,7 @@ export default function LoginPage() {
         return;
       }
 
-      router.push("/dashboard");
+      router.push("/");
     } catch (err) {
       console.error(err);
       setStatus("Could not connect to backend");
