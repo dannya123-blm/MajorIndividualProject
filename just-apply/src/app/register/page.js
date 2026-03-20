@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import justwork from "../images/justwork.png";
+
 
 export default function RegisterPage() {
   const router = useRouter();
