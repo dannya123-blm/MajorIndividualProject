@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import justwork from "../images/justwork.png";
 
 export default function DashboardPage() {
   const router = useRouter();
