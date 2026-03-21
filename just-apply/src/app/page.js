@@ -5,9 +5,10 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import justwork from "../images/justwork.png";
 
-export default function Uploader() {
+export default function HomePage() {
   const router = useRouter();
 
+  const [currentUser, setCurrentUser] = useState(null);
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState("");
   const [status, setStatus] = useState("");
@@ -22,9 +23,35 @@ export default function Uploader() {
   const [industryFilter, setIndustryFilter] = useState("All");
   const [locationFilter, setLocationFilter] = useState("All");
 
+  const fetchCurrentUser = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/api/me", {
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        router.push("/login");
+        return;
+      }
+
+      const data = await res.json();
+      setCurrentUser(data.user);
+    } catch (err) {
+      console.error(err);
+      router.push("/login");
+    }
+  };
+
   const fetchSavedJobs = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/saved-jobs");
+      const res = await fetch("http://127.0.0.1:5000/api/saved-jobs", {
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        return;
+      }
+
       const data = await res.json();
       setSavedJobs(data.saved_jobs || []);
     } catch (err) {
@@ -33,11 +60,21 @@ export default function Uploader() {
   };
 
   useEffect(() => {
+    fetchCurrentUser();
     fetchSavedJobs();
   }, []);
 
-  const handleLogout = () => {
-    router.push("/login");
+  const handleLogout = async () => {
+    try {
+      await fetch("http://127.0.0.1:5000/api/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      router.push("/login");
+    }
   };
 
   const handleFileChange = (e) => {
@@ -72,6 +109,7 @@ export default function Uploader() {
     try {
       const res = await fetch("http://127.0.0.1:5000/api/upload-cv", {
         method: "POST",
+        credentials: "include",
         body: formData,
       });
 
@@ -90,6 +128,7 @@ export default function Uploader() {
 
       const matchRes = await fetch("http://127.0.0.1:5000/api/match-jobs", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           skills: data.skills || [],
@@ -156,6 +195,7 @@ export default function Uploader() {
     try {
       const res = await fetch("http://127.0.0.1:5000/api/save-job", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job }),
       });
@@ -171,6 +211,7 @@ export default function Uploader() {
     try {
       const res = await fetch("http://127.0.0.1:5000/api/remove-saved-job", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: jobId }),
       });
@@ -270,6 +311,10 @@ export default function Uploader() {
       .map(([skill]) => skill);
   }, [filteredJobs]);
 
+  if (!currentUser) {
+    return null;
+  }
+
   return (
     <div className="dashboard-root">
       <aside className="sidebar">
@@ -312,7 +357,7 @@ export default function Uploader() {
           </nav>
 
           <div className="user">
-            <div className="welcome">Welcome, John Doe</div>
+            <div className="welcome">Welcome, {currentUser.name}</div>
             <div className="avatar" />
           </div>
         </header>
