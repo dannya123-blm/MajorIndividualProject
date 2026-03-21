@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import justwork from "../images/justwork.png";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -26,12 +25,6 @@ export default function LoginPage() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="brand auth-brand">
-          <Image
-            src={justwork}
-            alt="Just Apply logo"
-            width={28}
-            height={28}
-          />
           <div className="brand-name">Just Apply</div>
         </div>
 

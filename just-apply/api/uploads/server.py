@@ -74,7 +74,11 @@ app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=1)
 CORS(
     app,
     supports_credentials=True,
-    origins=["http://localhost:3000", "http://127.0.0.1:3000"]
+    origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://192.168.1.139:3000",
+    ],
 )
 
 jwt = JWTManager(app)
@@ -92,6 +96,7 @@ UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 LOCAL_SAVED_JOBS_PATH = os.path.join(BASE_DIR, "saved_jobs.json")
+LOCAL_USERS_PATH = os.path.join(BASE_DIR, "users.json")
 JOB_CSV_PATH = os.path.join(BASE_DIR, "jobPosts", "jobposts.csv")
 
 print("Looking for jobposts.csv at:", JOB_CSV_PATH)
@@ -224,9 +229,126 @@ def db_available():
         conn = get_db_connection()
         conn.close()
         return True
-    except Exception as e:
-        print("Database unavailable:", e)
+    except Exception:
         return False
+
+
+def load_local_users():
+    if not os.path.exists(LOCAL_USERS_PATH):
+        return []
+
+    try:
+        with open(LOCAL_USERS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print("Local users load error:", e)
+        return []
+
+
+def save_local_users(users):
+    with open(LOCAL_USERS_PATH, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+
+def get_local_user_by_email(email: str):
+    users = load_local_users()
+    for user in users:
+        if user.get("email", "").lower() == email.lower():
+            return user
+    return None
+
+
+def create_local_user(name: str, email: str, password_hash: str):
+    users = load_local_users()
+
+    for user in users:
+        if user.get("email", "").lower() == email.lower():
+            raise ValueError("User already exists")
+
+    next_id = 1 if not users else max(user.get("id", 0) for user in users) + 1
+
+    new_user = {
+        "id": next_id,
+        "name": name,
+        "email": email,
+        "password_hash": password_hash,
+        "created_at": datetime.now().isoformat(),
+    }
+
+    users.append(new_user)
+    save_local_users(users)
+    return new_user
+
+
+def get_db_user_by_email(email: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id, name, email, password_hash FROM users WHERE email = ?",
+        (email,)
+    )
+    user = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    if not user:
+        return None
+
+    return {
+        "id": user[0],
+        "name": user[1],
+        "email": user[2],
+        "password_hash": user[3],
+    }
+
+
+def create_db_user(name: str, email: str, password_hash: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+        (name, email, password_hash)
+    )
+    conn.commit()
+
+    cursor.execute(
+        "SELECT id, name, email, password_hash FROM users WHERE email = ?",
+        (email,)
+    )
+    user = cursor.fetchone()
+
+    cursor.close()
+    conn.close()
+
+    return {
+        "id": user[0],
+        "name": user[1],
+        "email": user[2],
+        "password_hash": user[3],
+    }
+
+
+def get_user_by_email(email: str):
+    if db_available():
+        try:
+            return get_db_user_by_email(email)
+        except Exception as e:
+            print("DB get user failed, falling back to local:", e)
+
+    return get_local_user_by_email(email)
+
+
+def create_user(name: str, email: str, password_hash: str):
+    if db_available():
+        try:
+            return create_db_user(name, email, password_hash)
+        except Exception as e:
+            print("DB create user failed, falling back to local:", e)
+
+    return create_local_user(name, email, password_hash)
 
 
 def normalize_tokens(text: str) -> list[str]:
@@ -374,37 +496,22 @@ def register():
     if len(password) < 6:
         return jsonify({"error": "Password must be at least 6 characters"}), 400
 
-    if not db_available():
-        return jsonify({"error": "Database connection failed"}), 500
+    existing_user = get_user_by_email(email)
+    if existing_user:
+        return jsonify({"error": "User already exists"}), 400
 
     password_hash = generate_password_hash(password)
 
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-            (name, email, password_hash)
-        )
-        conn.commit()
-
-        cursor.execute(
-            "SELECT id, name, email FROM users WHERE email = ?",
-            (email,)
-        )
-        user = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
+        user = create_user(name, email, password_hash)
 
         access_token = create_access_token(identity=email)
         response = jsonify({
             "message": "User registered successfully",
             "user": {
-                "id": user[0],
-                "name": user[1],
-                "email": user[2]
+                "id": user["id"],
+                "name": user["name"],
+                "email": user["email"]
             }
         })
         set_access_cookies(response, access_token)
@@ -412,7 +519,7 @@ def register():
 
     except Exception as e:
         print("Register error:", e)
-        return jsonify({"error": "User already exists or registration failed"}), 400
+        return jsonify({"error": "Registration failed"}), 500
 
 
 @app.route("/api/login", methods=["POST"])
@@ -425,37 +532,22 @@ def login():
     if not email or not password:
         return jsonify({"error": "Email and password are required"}), 400
 
-    if not db_available():
-        return jsonify({"error": "Database connection failed"}), 500
-
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "SELECT id, name, email, password_hash FROM users WHERE email = ?",
-            (email,)
-        )
-        user = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
+        user = get_user_by_email(email)
 
         if not user:
             return jsonify({"error": "Invalid credentials"}), 401
 
-        user_id, name, user_email, password_hash = user
-
-        if not check_password_hash(password_hash, password):
+        if not check_password_hash(user["password_hash"], password):
             return jsonify({"error": "Invalid credentials"}), 401
 
-        access_token = create_access_token(identity=user_email)
+        access_token = create_access_token(identity=user["email"])
         response = jsonify({
             "message": "Login successful",
             "user": {
-                "id": user_id,
-                "name": name,
-                "email": user_email
+                "id": user["id"],
+                "name": user["name"],
+                "email": user["email"]
             }
         })
         set_access_cookies(response, access_token)
@@ -471,32 +563,20 @@ def login():
 def me():
     email = get_jwt_identity()
 
-    if not db_available():
-        return jsonify({"error": "Database connection failed"}), 500
-
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute(
-            "SELECT id, name, email FROM users WHERE email = ?",
-            (email,)
-        )
-        user = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
+        user = get_user_by_email(email)
 
         if not user:
             return jsonify({"error": "User not found"}), 404
 
         return jsonify({
             "user": {
-                "id": user[0],
-                "name": user[1],
-                "email": user[2]
+                "id": user["id"],
+                "name": user["name"],
+                "email": user["email"]
             }
         }), 200
+
     except Exception as e:
         print("Me error:", e)
         return jsonify({"error": "Could not load user"}), 500
@@ -747,4 +827,4 @@ if __name__ == "__main__":
     print("Available ODBC drivers:", pyodbc.drivers())
 
     init_db()
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True)
