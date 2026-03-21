@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import justwork from "../images/justwork.png";
 
+const API_BASE_URL = "http://192.168.1.139:5000";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -16,7 +18,7 @@ export default function RegisterPage() {
     setStatus("");
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/register", {
+      const res = await fetch(`${API_BASE_URL}/api/register`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -30,7 +32,8 @@ export default function RegisterPage() {
         return;
       }
 
-      router.push("/dashboard");
+      router.push("/");
+      router.refresh();
     } catch (err) {
       console.error(err);
       setStatus("Could not connect to backend");
@@ -41,6 +44,7 @@ export default function RegisterPage() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="brand auth-brand">
+          <Image src={justwork} alt="Just Apply logo" width={28} height={28} />
           <div className="brand-name">Just Apply</div>
         </div>
 

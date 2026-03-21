@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import justwork from "../images/justwork.png";
 
+const API_BASE_URL = "http://192.168.1.139:5000";
+
 export default function HomePage() {
   const router = useRouter();
 
@@ -25,7 +27,7 @@ export default function HomePage() {
 
   const fetchCurrentUser = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/me", {
+      const res = await fetch(`${API_BASE_URL}/api/me`, {
         credentials: "include",
       });
 
@@ -44,7 +46,7 @@ export default function HomePage() {
 
   const fetchSavedJobs = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/saved-jobs", {
+      const res = await fetch(`${API_BASE_URL}/api/saved-jobs`, {
         credentials: "include",
       });
 
@@ -66,7 +68,7 @@ export default function HomePage() {
 
   const handleLogout = async () => {
     try {
-      await fetch("http://127.0.0.1:5000/api/logout", {
+      await fetch(`${API_BASE_URL}/api/logout`, {
         method: "POST",
         credentials: "include",
       });
@@ -107,7 +109,7 @@ export default function HomePage() {
     setStatus("Uploading & parsing CV...");
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/upload-cv", {
+      const res = await fetch(`${API_BASE_URL}/api/upload-cv`, {
         method: "POST",
         credentials: "include",
         body: formData,
@@ -126,7 +128,7 @@ export default function HomePage() {
       setAzureBlobUrl(data.azure_blob_url || "");
       setStatus("CV parsed. Finding matching jobs...");
 
-      const matchRes = await fetch("http://127.0.0.1:5000/api/match-jobs", {
+      const matchRes = await fetch(`${API_BASE_URL}/api/match-jobs`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -193,7 +195,7 @@ export default function HomePage() {
 
   const saveJob = async (job) => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/save-job", {
+      const res = await fetch(`${API_BASE_URL}/api/save-job`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -209,7 +211,7 @@ export default function HomePage() {
 
   const removeSavedJob = async (jobId) => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/remove-saved-job", {
+      const res = await fetch(`${API_BASE_URL}/api/remove-saved-job`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
