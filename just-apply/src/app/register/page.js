@@ -19,7 +19,6 @@ export default function RegisterPage() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/register`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, password }),
       });
@@ -31,6 +30,7 @@ export default function RegisterPage() {
         return;
       }
 
+      localStorage.setItem("access_token", data.access_token);
       router.push("/");
       router.refresh();
     } catch (err) {

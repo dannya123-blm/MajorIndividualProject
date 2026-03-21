@@ -13,7 +13,6 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from flasgger import Swagger
 from azure.storage.blob import BlobServiceClient
-from azure.core.exceptions import ResourceNotFoundError
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import (
@@ -21,8 +20,6 @@ from flask_jwt_extended import (
     create_access_token,
     get_jwt_identity,
     jwt_required,
-    set_access_cookies,
-    unset_jwt_cookies,
 )
 import pyodbc
 import pandas as pd
@@ -53,10 +50,7 @@ else:
 
 app = Flask(__name__)
 app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-change-me")
-app.config["JWT_TOKEN_LOCATION"] = ["cookies"]
-app.config["JWT_COOKIE_SECURE"] = False
-app.config["JWT_COOKIE_SAMESITE"] = "Lax"
-app.config["JWT_COOKIE_CSRF_PROTECT"] = False
+app.config["JWT_TOKEN_LOCATION"] = ["headers"]
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=1)
 
 CORS(
@@ -75,7 +69,7 @@ swagger = Swagger(app, template={
     "info": {
         "title": "Just Apply API",
         "description": "API for CV upload, NLP skill extraction, job matching, saved jobs, and authentication.",
-        "version": "2.1.0"
+        "version": "2.3.0"
     }
 })
 
@@ -83,8 +77,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-LOCAL_USERS_PATH = os.path.join(BASE_DIR, "users.json")
-LOCAL_SAVED_JOBS_PATH = os.path.join(BASE_DIR, "saved_jobs.json")
 JOB_CSV_PATH = os.path.join(BASE_DIR, "jobPosts", "jobposts.csv")
 
 print("Looking for jobposts.csv at:", JOB_CSV_PATH)
@@ -183,107 +175,54 @@ def get_db_connection():
     return pyodbc.connect(conn_str)
 
 
-def db_available():
-    try:
-        conn = get_db_connection()
-        conn.close()
-        return True
-    except Exception as e:
-        print("Database unavailable:", e)
-        return False
-
-
 def init_db():
-    if not db_available():
-        print("Azure SQL unavailable. Using local fallback for auth and saved jobs.")
-        return False
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+    cursor.execute("""
+    IF NOT EXISTS (
+        SELECT * FROM sysobjects WHERE name='users' AND xtype='U'
+    )
+    CREATE TABLE users (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        name NVARCHAR(255) NOT NULL,
+        email NVARCHAR(255) UNIQUE NOT NULL,
+        password_hash NVARCHAR(255) NOT NULL,
+        created_at DATETIME DEFAULT GETDATE()
+    )
+    """)
 
-        cursor.execute("""
-        IF NOT EXISTS (
-            SELECT * FROM sysobjects WHERE name='users' AND xtype='U'
-        )
-        CREATE TABLE users (
-            id INT IDENTITY(1,1) PRIMARY KEY,
-            name NVARCHAR(255) NOT NULL,
-            email NVARCHAR(255) UNIQUE NOT NULL,
-            password_hash NVARCHAR(255) NOT NULL,
-            created_at DATETIME DEFAULT GETDATE()
-        )
-        """)
+    cursor.execute("""
+    IF NOT EXISTS (
+        SELECT * FROM sysobjects WHERE name='saved_jobs' AND xtype='U'
+    )
+    CREATE TABLE saved_jobs (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        user_email NVARCHAR(255) NOT NULL,
+        job_id NVARCHAR(255) NOT NULL,
+        title NVARCHAR(255) NULL,
+        company NVARCHAR(255) NULL,
+        location NVARCHAR(255) NULL,
+        industry NVARCHAR(255) NULL,
+        total_score INT NULL,
+        skill_score INT NULL,
+        qual_score INT NULL,
+        match_percentage INT NULL,
+        matched_skills NVARCHAR(MAX) NULL,
+        missing_skills NVARCHAR(MAX) NULL,
+        missing_qualifications NVARCHAR(MAX) NULL,
+        raw_job_json NVARCHAR(MAX) NOT NULL,
+        saved_at DATETIME DEFAULT GETDATE()
+    )
+    """)
 
-        cursor.execute("""
-        IF NOT EXISTS (
-            SELECT * FROM sysobjects WHERE name='saved_jobs' AND xtype='U'
-        )
-        CREATE TABLE saved_jobs (
-            id INT IDENTITY(1,1) PRIMARY KEY,
-            user_email NVARCHAR(255) NOT NULL,
-            job_id NVARCHAR(255) NOT NULL,
-            title NVARCHAR(255) NULL,
-            company NVARCHAR(255) NULL,
-            location NVARCHAR(255) NULL,
-            industry NVARCHAR(255) NULL,
-            total_score INT NULL,
-            skill_score INT NULL,
-            qual_score INT NULL,
-            match_percentage INT NULL,
-            matched_skills NVARCHAR(MAX) NULL,
-            missing_skills NVARCHAR(MAX) NULL,
-            missing_qualifications NVARCHAR(MAX) NULL,
-            raw_job_json NVARCHAR(MAX) NOT NULL,
-            saved_at DATETIME DEFAULT GETDATE()
-        )
-        """)
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-        print("Azure SQL tables ready.")
-        return True
-    except Exception as e:
-        print("Azure SQL init failed:", e)
-        return False
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print("Azure SQL tables ready.")
 
 
-def load_local_users():
-    if not os.path.exists(LOCAL_USERS_PATH):
-        return []
-
-    try:
-        with open(LOCAL_USERS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print("Local users load error:", e)
-        return []
-
-
-def save_local_users(users):
-    with open(LOCAL_USERS_PATH, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
-
-
-def load_local_saved_jobs():
-    if not os.path.exists(LOCAL_SAVED_JOBS_PATH):
-        return []
-
-    try:
-        with open(LOCAL_SAVED_JOBS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print("Local saved jobs load error:", e)
-        return []
-
-
-def save_local_saved_jobs(jobs):
-    with open(LOCAL_SAVED_JOBS_PATH, "w", encoding="utf-8") as f:
-        json.dump(jobs, f, ensure_ascii=False, indent=2)
-
-
-def get_db_user_by_email(email: str):
+def get_user_by_email(email: str):
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -307,7 +246,7 @@ def get_db_user_by_email(email: str):
     }
 
 
-def create_db_user(name: str, email: str, password_hash: str):
+def create_user(name: str, email: str, password_hash: str):
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -334,57 +273,7 @@ def create_db_user(name: str, email: str, password_hash: str):
     }
 
 
-def get_local_user_by_email(email: str):
-    users = load_local_users()
-    for user in users:
-        if user.get("email", "").lower() == email.lower():
-            return user
-    return None
-
-
-def create_local_user(name: str, email: str, password_hash: str):
-    users = load_local_users()
-
-    for user in users:
-        if user.get("email", "").lower() == email.lower():
-            raise ValueError("User already exists")
-
-    next_id = 1 if not users else max(user.get("id", 0) for user in users) + 1
-
-    new_user = {
-        "id": next_id,
-        "name": name,
-        "email": email,
-        "password_hash": password_hash,
-        "created_at": datetime.now().isoformat(),
-    }
-
-    users.append(new_user)
-    save_local_users(users)
-    return new_user
-
-
-def get_user_by_email(email: str):
-    if db_available():
-        try:
-            return get_db_user_by_email(email)
-        except Exception as e:
-            print("DB get user failed, falling back to local:", e)
-
-    return get_local_user_by_email(email)
-
-
-def create_user(name: str, email: str, password_hash: str):
-    if db_available():
-        try:
-            return create_db_user(name, email, password_hash)
-        except Exception as e:
-            print("DB create user failed, falling back to local:", e)
-
-    return create_local_user(name, email, password_hash)
-
-
-def get_db_saved_jobs_by_user(user_email: str):
+def get_saved_jobs_by_user(user_email: str):
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -408,7 +297,7 @@ def get_db_saved_jobs_by_user(user_email: str):
     return jobs
 
 
-def save_db_job_for_user(user_email: str, job: dict):
+def save_job_for_user(user_email: str, job: dict):
     job_id = (
         job.get("job_id")
         or job.get("id")
@@ -466,7 +355,7 @@ def save_db_job_for_user(user_email: str, job: dict):
     return True
 
 
-def remove_db_saved_job(user_email: str, job_id: str):
+def remove_saved_job_for_user(user_email: str, job_id: str):
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -478,77 +367,6 @@ def remove_db_saved_job(user_email: str, job_id: str):
     conn.commit()
     cursor.close()
     conn.close()
-
-
-def get_local_saved_jobs_by_user(user_email: str):
-    jobs = load_local_saved_jobs()
-    return [job for job in jobs if job.get("user_email") == user_email]
-
-
-def save_local_job_for_user(user_email: str, job: dict):
-    jobs = load_local_saved_jobs()
-
-    job_id = (
-        job.get("job_id")
-        or job.get("id")
-        or job.get("title")
-        or job.get("job_title")
-    )
-
-    if not job_id:
-        job_id = f"job-{datetime.now().timestamp()}"
-
-    for existing in jobs:
-        if existing.get("user_email") == user_email and existing.get("job_id") == job_id:
-            return False
-
-    job["job_id"] = job_id
-    job["user_email"] = user_email
-    job["saved_at"] = datetime.now().isoformat()
-
-    jobs.append(job)
-    save_local_saved_jobs(jobs)
-    return True
-
-
-def remove_local_saved_job(user_email: str, job_id: str):
-    jobs = load_local_saved_jobs()
-    jobs = [
-        job for job in jobs
-        if not (job.get("user_email") == user_email and job.get("job_id") == job_id)
-    ]
-    save_local_saved_jobs(jobs)
-
-
-def get_saved_jobs_by_user(user_email: str):
-    if db_available():
-        try:
-            return get_db_saved_jobs_by_user(user_email)
-        except Exception as e:
-            print("DB saved jobs read failed, falling back to local:", e)
-
-    return get_local_saved_jobs_by_user(user_email)
-
-
-def save_job_for_user(user_email: str, job: dict):
-    if db_available():
-        try:
-            return save_db_job_for_user(user_email, job)
-        except Exception as e:
-            print("DB save job failed, falling back to local:", e)
-
-    return save_local_job_for_user(user_email, job)
-
-
-def remove_saved_job_for_user(user_email: str, job_id: str):
-    if db_available():
-        try:
-            remove_db_saved_job(user_email, job_id)
-            return
-        except Exception as e:
-            print("DB remove job failed, falling back to local:", e)
-
-    remove_local_saved_job(user_email, job_id)
 
 
 def normalize_tokens(text: str) -> list[str]:
@@ -662,25 +480,18 @@ def register():
         return jsonify({"error": "User already exists"}), 400
 
     password_hash = generate_password_hash(password)
+    user = create_user(name, email, password_hash)
+    access_token = create_access_token(identity=email)
 
-    try:
-        user = create_user(name, email, password_hash)
-
-        access_token = create_access_token(identity=email)
-        response = jsonify({
-            "message": "User registered successfully",
-            "user": {
-                "id": user["id"],
-                "name": user["name"],
-                "email": user["email"]
-            }
-        })
-        set_access_cookies(response, access_token)
-        return response, 201
-
-    except Exception as e:
-        print("Register error:", e)
-        return jsonify({"error": "Registration failed"}), 500
+    return jsonify({
+        "message": "User registered successfully",
+        "access_token": access_token,
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"]
+        }
+    }), 201
 
 
 @app.route("/api/login", methods=["POST"])
@@ -693,65 +504,51 @@ def login():
     if not email or not password:
         return jsonify({"error": "Email and password are required"}), 400
 
-    try:
-        user = get_user_by_email(email)
+    user = get_user_by_email(email)
 
-        if not user:
-            return jsonify({"error": "Invalid credentials"}), 401
+    if not user:
+        return jsonify({"error": "Invalid credentials"}), 401
 
-        if not check_password_hash(user["password_hash"], password):
-            return jsonify({"error": "Invalid credentials"}), 401
+    if not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "Invalid credentials"}), 401
 
-        access_token = create_access_token(identity=user["email"])
-        response = jsonify({
-            "message": "Login successful",
-            "user": {
-                "id": user["id"],
-                "name": user["name"],
-                "email": user["email"]
-            }
-        })
-        set_access_cookies(response, access_token)
-        return response, 200
+    access_token = create_access_token(identity=user["email"])
 
-    except Exception as e:
-        print("Login error:", e)
-        return jsonify({"error": "Login failed"}), 500
+    return jsonify({
+        "message": "Login successful",
+        "access_token": access_token,
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"]
+        }
+    }), 200
 
 
 @app.route("/api/me", methods=["GET"])
 @jwt_required()
 def me():
     email = get_jwt_identity()
+    user = get_user_by_email(email)
 
-    try:
-        user = get_user_by_email(email)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
 
-        if not user:
-            return jsonify({"error": "User not found"}), 404
-
-        return jsonify({
-            "user": {
-                "id": user["id"],
-                "name": user["name"],
-                "email": user["email"]
-            }
-        }), 200
-
-    except Exception as e:
-        print("Me error:", e)
-        return jsonify({"error": "Could not load user"}), 500
+    return jsonify({
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"]
+        }
+    }), 200
 
 
 @app.route("/api/logout", methods=["POST"])
 def logout():
-    response = jsonify({"message": "Logged out"})
-    unset_jwt_cookies(response)
-    return response, 200
+    return jsonify({"message": "Logged out"}), 200
 
 
 @app.route("/api/upload-cv", methods=["POST"])
-@jwt_required(optional=True)
 def upload_and_parse_cv():
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -797,7 +594,6 @@ def upload_and_parse_cv():
 
 
 @app.route("/api/match-jobs", methods=["POST"])
-@jwt_required(optional=True)
 def match_jobs():
     global job_df
     if job_df is None:
@@ -930,37 +726,27 @@ def save_job():
     if not isinstance(job, dict):
         return jsonify({"error": "No job provided"}), 400
 
-    try:
-        saved = save_job_for_user(user_email, job)
-        jobs = get_saved_jobs_by_user(user_email)
+    saved = save_job_for_user(user_email, job)
+    jobs = get_saved_jobs_by_user(user_email)
 
-        if not saved:
-            return jsonify({
-                "message": "Job already saved",
-                "saved_jobs": jobs
-            }), 200
-
+    if not saved:
         return jsonify({
-            "message": "Job saved successfully",
+            "message": "Job already saved",
             "saved_jobs": jobs
-        }), 201
+        }), 200
 
-    except Exception as e:
-        print("Save job error:", e)
-        return jsonify({"error": "Could not save job"}), 500
+    return jsonify({
+        "message": "Job saved successfully",
+        "saved_jobs": jobs
+    }), 201
 
 
 @app.route("/api/saved-jobs", methods=["GET"])
 @jwt_required()
 def get_saved_jobs():
     user_email = get_jwt_identity()
-
-    try:
-        jobs = get_saved_jobs_by_user(user_email)
-        return jsonify({"saved_jobs": jobs}), 200
-    except Exception as e:
-        print("Get saved jobs error:", e)
-        return jsonify({"error": "Could not load saved jobs"}), 500
+    jobs = get_saved_jobs_by_user(user_email)
+    return jsonify({"saved_jobs": jobs}), 200
 
 
 @app.route("/api/remove-saved-job", methods=["POST"])
@@ -973,17 +759,13 @@ def remove_saved_job():
     if not job_id:
         return jsonify({"error": "job_id is required"}), 400
 
-    try:
-        remove_saved_job_for_user(user_email, job_id)
-        jobs = get_saved_jobs_by_user(user_email)
+    remove_saved_job_for_user(user_email, job_id)
+    jobs = get_saved_jobs_by_user(user_email)
 
-        return jsonify({
-            "message": "Job removed",
-            "saved_jobs": jobs
-        }), 200
-    except Exception as e:
-        print("Remove saved job error:", e)
-        return jsonify({"error": "Could not remove job"}), 500
+    return jsonify({
+        "message": "Job removed",
+        "saved_jobs": jobs
+    }), 200
 
 
 if __name__ == "__main__":

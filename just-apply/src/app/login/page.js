@@ -18,7 +18,6 @@ export default function LoginPage() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/login`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
@@ -30,6 +29,7 @@ export default function LoginPage() {
         return;
       }
 
+      localStorage.setItem("access_token", data.access_token);
       router.push("/");
       router.refresh();
     } catch (err) {

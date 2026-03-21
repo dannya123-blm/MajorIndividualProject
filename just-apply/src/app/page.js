@@ -7,6 +7,15 @@ import justwork from "../images/justwork.png";
 
 const API_BASE_URL = "http://192.168.1.139:5000";
 
+const getAuthHeaders = () => {
+  const token = localStorage.getItem("access_token");
+  return token
+    ? {
+        Authorization: `Bearer ${token}`,
+      }
+    : {};
+};
+
 export default function HomePage() {
   const router = useRouter();
 
@@ -28,7 +37,9 @@ export default function HomePage() {
   const fetchCurrentUser = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/me`, {
-        credentials: "include",
+        headers: {
+          ...getAuthHeaders(),
+        },
       });
 
       if (!res.ok) {
@@ -47,7 +58,9 @@ export default function HomePage() {
   const fetchSavedJobs = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/saved-jobs`, {
-        credentials: "include",
+        headers: {
+          ...getAuthHeaders(),
+        },
       });
 
       if (!res.ok) {
@@ -62,6 +75,11 @@ export default function HomePage() {
   };
 
   useEffect(() => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      router.push("/login");
+      return;
+    }
     fetchCurrentUser();
     fetchSavedJobs();
   }, []);
@@ -70,11 +88,11 @@ export default function HomePage() {
     try {
       await fetch(`${API_BASE_URL}/api/logout`, {
         method: "POST",
-        credentials: "include",
       });
     } catch (err) {
       console.error(err);
     } finally {
+      localStorage.removeItem("access_token");
       router.push("/login");
     }
   };
@@ -111,7 +129,6 @@ export default function HomePage() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/upload-cv`, {
         method: "POST",
-        credentials: "include",
         body: formData,
       });
 
@@ -130,8 +147,9 @@ export default function HomePage() {
 
       const matchRes = await fetch(`${API_BASE_URL}/api/match-jobs`, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           skills: data.skills || [],
           qualifications: data.qualifications || [],
@@ -197,8 +215,10 @@ export default function HomePage() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/save-job`, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify({ job }),
       });
 
@@ -213,8 +233,10 @@ export default function HomePage() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/remove-saved-job`, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify({ job_id: jobId }),
       });
 
