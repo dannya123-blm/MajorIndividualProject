@@ -3,40 +3,40 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import justwork from "../images/justwork.png";
 
 const API_BASE_URL = "http://192.168.1.139:5000";
 
-export default function LoginPage() {
+export default function RegisterPage() {
   const router = useRouter();
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async () => {
+  const handleRegister = async () => {
     setStatus("");
 
-    if (!email.trim() || !password.trim()) {
-      setStatus("Please enter email and password.");
+    if (!name.trim() || !email.trim() || !password.trim()) {
+      setStatus("Please complete all fields.");
       return;
     }
 
     try {
       setLoading(true);
 
-      const res = await fetch(`${API_BASE_URL}/api/login`, {
+      const res = await fetch(`${API_BASE_URL}/api/register`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ name, email, password }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        setStatus(data.error || "Login failed");
+        setStatus(data.error || "Registration failed");
         return;
       }
 
@@ -56,29 +56,22 @@ export default function LoginPage() {
       <div className="auth-hero">
         <div className="auth-hero-card">
           <div className="auth-brand-row">
-            <Image
-              src={justwork}
-              alt="Just Apply logo"
-              width={28}
-              height={28}
-              className="auth-brand-logo"
-            />
             <span className="auth-brand-name">Just Apply</span>
           </div>
 
           <div className="auth-hero-copy">
             <p className="auth-kicker">AI-powered job matching</p>
-            <h1>Welcome back</h1>
+            <h1>Create your account</h1>
             <p className="auth-hero-text">
-              Sign in to continue uploading CVs, reviewing job matches, and
-              managing saved roles through a personalised dashboard.
+              Join the platform to upload CVs, extract skills, track saved jobs,
+              and receive clearer job-match insights in one place.
             </p>
           </div>
 
           <div className="auth-feature-list">
-            <div className="auth-feature-pill">Smart CV parsing</div>
-            <div className="auth-feature-pill">Saved jobs by user</div>
-            <div className="auth-feature-pill">Azure cloud storage</div>
+            <div className="auth-feature-pill">Personalised dashboard</div>
+            <div className="auth-feature-pill">Cloud-backed accounts</div>
+            <div className="auth-feature-pill">User-specific saved jobs</div>
           </div>
         </div>
       </div>
@@ -86,14 +79,25 @@ export default function LoginPage() {
       <div className="auth-panel">
         <div className="auth-card-modern">
           <div className="auth-card-head">
-            <p className="auth-section-kicker">Account access</p>
-            <h2>Login</h2>
+            <p className="auth-section-kicker">New user setup</p>
+            <h2>Register</h2>
             <p className="auth-subtext">
-              Access your personalised job matching dashboard.
+              Create an account to start using Just Apply.
             </p>
           </div>
 
           <div className="auth-form-modern">
+            <div className="auth-field">
+              <label>Full name</label>
+              <input
+                className="auth-input-modern"
+                type="text"
+                placeholder="Enter your full name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+
             <div className="auth-field">
               <label>Email address</label>
               <input
@@ -110,7 +114,7 @@ export default function LoginPage() {
               <input
                 className="auth-input-modern"
                 type="password"
-                placeholder="Enter your password"
+                placeholder="Create a password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -118,17 +122,17 @@ export default function LoginPage() {
 
             <button
               className="auth-primary-btn"
-              onClick={handleLogin}
+              onClick={handleRegister}
               disabled={loading}
             >
-              {loading ? "Signing in..." : "Login to Dashboard"}
+              {loading ? "Creating account..." : "Create Account"}
             </button>
 
             <button
               className="auth-secondary-btn"
-              onClick={() => router.push("/register")}
+              onClick={() => router.push("/login")}
             >
-              Create a new account
+              Already have an account? Login
             </button>
 
             {status && <div className="auth-status-box">{status}</div>}

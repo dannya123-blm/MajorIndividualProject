@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
-import justwork from "../images/justwork.png";
+import Image from "next/image"; 
 
 const API_BASE_URL = "http://192.168.1.139:5000";
 
@@ -56,13 +55,6 @@ export default function LoginPage() {
       <div className="auth-hero">
         <div className="auth-hero-card">
           <div className="auth-brand-row">
-            <Image
-              src={justwork}
-              alt="Just Apply logo"
-              width={28}
-              height={28}
-              className="auth-brand-logo"
-            />
             <span className="auth-brand-name">Just Apply</span>
           </div>
 
