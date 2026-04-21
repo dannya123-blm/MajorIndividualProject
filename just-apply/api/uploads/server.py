@@ -2,16 +2,21 @@ import os
 import json
 from datetime import datetime, timedelta
 
+import requests
+import nltk
+import pyodbc
+import pandas as pd
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flasgger import Swagger
 
 from PyPDF2 import PdfReader
 from docx import Document
 
-import nltk
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
-from flasgger import Swagger
+
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -21,9 +26,10 @@ from flask_jwt_extended import (
     get_jwt_identity,
     jwt_required,
 )
-import pyodbc
-import pandas as pd
 
+# =========================================================
+# ENV
+# =========================================================
 load_dotenv()
 
 AZURE_CONNECTION_STRING = os.getenv("AZURE_CONNECTION_STRING")
@@ -34,6 +40,13 @@ AZURE_SQL_DATABASE = os.getenv("AZURE_SQL_DATABASE")
 AZURE_SQL_USERNAME = os.getenv("AZURE_SQL_USERNAME")
 AZURE_SQL_PASSWORD = os.getenv("AZURE_SQL_PASSWORD")
 
+ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
+ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
+ADZUNA_COUNTRY = os.getenv("ADZUNA_COUNTRY", "ie")
+
+# =========================================================
+# AZURE BLOB
+# =========================================================
 blob_service_client = None
 cv_container_client = None
 
@@ -48,6 +61,9 @@ else:
         "Files will NOT be uploaded to Azure."
     )
 
+# =========================================================
+# FLASK APP
+# =========================================================
 app = Flask(__name__)
 app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-change-me")
 app.config["JWT_TOKEN_LOCATION"] = ["headers"]
@@ -70,18 +86,24 @@ swagger = Swagger(
     template={
         "info": {
             "title": "Just Apply API",
-            "description": "API for CV upload, NLP skill extraction, job matching, saved jobs, profile analytics, and authentication.",
-            "version": "2.4.0",
+            "description": "API for CV upload, NLP extraction, Adzuna live jobs, saved jobs, applications, profile analytics, and authentication.",
+            "version": "3.0.0",
         }
     },
 )
 
+# =========================================================
+# PATHS
+# =========================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 JOB_CSV_PATH = os.path.join(BASE_DIR, "jobPosts", "jobposts.csv")
 
+# =========================================================
+# OPTIONAL CSV DATASET (KEEPING IT AS FALLBACK / TEST DATA)
+# =========================================================
 print("Looking for jobposts.csv at:", JOB_CSV_PATH)
 try:
     job_df = pd.read_csv(JOB_CSV_PATH)
@@ -100,11 +122,13 @@ try:
             f"[TEST MODE] Dataset has {len(job_df)} rows "
             f"(<= {TEST_SAMPLE_SIZE}), using all of them."
         )
-
 except Exception as e:
     print("ERROR loading jobposts.csv:", e)
     job_df = None
 
+# =========================================================
+# NLTK
+# =========================================================
 try:
     stopwords.words("english")
 except LookupError:
@@ -128,7 +152,8 @@ SKILL_KEYWORDS = [
     "sql", "mysql", "postgresql", "azure", "aws", "docker",
     "git", "linux", "power bi",
     "nlp", "natural language processing", "machine learning",
-    "data analysis",
+    "data analysis", "data analytics", "ui", "ux", "figma",
+    "cloud", "kubernetes", "devops", "terraform"
 ]
 
 QUALIFICATION_KEYWORDS = [
@@ -140,10 +165,12 @@ QUALIFICATION_KEYWORDS = [
     "master of arts",
     "honours", "hons", "higher diploma", "postgraduate diploma",
     "aws certified", "azure certification", "oracle certified",
-    "microsoft certified", "ccna", "comptia",
+    "microsoft certified", "ccna", "comptia"
 ]
 
-
+# =========================================================
+# DATABASE
+# =========================================================
 def get_sql_driver():
     available = pyodbc.drivers()
 
@@ -234,12 +261,34 @@ def init_db():
     )
     """)
 
+    cursor.execute("""
+    IF NOT EXISTS (
+        SELECT * FROM sysobjects WHERE name='job_applications' AND xtype='U'
+    )
+    CREATE TABLE job_applications (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        user_email NVARCHAR(255) NOT NULL,
+        external_job_id NVARCHAR(255) NOT NULL,
+        source_name NVARCHAR(100) NOT NULL,
+        title NVARCHAR(255) NULL,
+        company NVARCHAR(255) NULL,
+        location NVARCHAR(255) NULL,
+        apply_url NVARCHAR(MAX) NULL,
+        status NVARCHAR(50) NOT NULL DEFAULT 'Applied',
+        notes NVARCHAR(MAX) NULL,
+        applied_at DATETIME DEFAULT GETDATE()
+    )
+    """)
+
     conn.commit()
     cursor.close()
     conn.close()
     print("Azure SQL tables ready.")
 
 
+# =========================================================
+# USER HELPERS
+# =========================================================
 def get_user_by_email(email: str):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -291,6 +340,9 @@ def create_user(name: str, email: str, password_hash: str):
     }
 
 
+# =========================================================
+# SAVED JOBS HELPERS
+# =========================================================
 def get_saved_jobs_by_user(user_email: str):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -318,6 +370,7 @@ def get_saved_jobs_by_user(user_email: str):
 def save_job_for_user(user_email: str, job: dict):
     job_id = (
         job.get("job_id")
+        or job.get("external_job_id")
         or job.get("id")
         or job.get("title")
         or job.get("job_title")
@@ -333,7 +386,7 @@ def save_job_for_user(user_email: str, job: dict):
         SELECT id
         FROM saved_jobs
         WHERE user_email = ? AND job_id = ?
-    """, (user_email, job_id))
+    """, (user_email, str(job_id)))
     existing = cursor.fetchone()
 
     if existing:
@@ -345,10 +398,10 @@ def save_job_for_user(user_email: str, job: dict):
     company = job.get("company") or ""
     location = job.get("location") or ""
     industry = job.get("industry") or ""
-    total_score = job.get("total_score", 0)
-    skill_score = job.get("skill_score", 0)
-    qual_score = job.get("qual_score", 0)
-    match_percentage = job.get("match_percentage", 0)
+    total_score = int(job.get("total_score", 0) or 0)
+    skill_score = int(job.get("skill_score", 0) or 0)
+    qual_score = int(job.get("qual_score", 0) or 0)
+    match_percentage = int(job.get("match_percentage", 0) or 0)
     matched_skills = json.dumps(job.get("matched_skills", []))
     missing_skills = json.dumps(job.get("missing_skills", []))
     missing_qualifications = json.dumps(job.get("missing_qualifications", []))
@@ -362,7 +415,7 @@ def save_job_for_user(user_email: str, job: dict):
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
-        user_email, job_id, title, company, location, industry,
+        user_email, str(job_id), title, company, location, industry,
         total_score, skill_score, qual_score, match_percentage,
         matched_skills, missing_skills, missing_qualifications, raw_job_json
     ))
@@ -380,13 +433,16 @@ def remove_saved_job_for_user(user_email: str, job_id: str):
     cursor.execute("""
         DELETE FROM saved_jobs
         WHERE user_email = ? AND job_id = ?
-    """, (user_email, job_id))
+    """, (user_email, str(job_id)))
 
     conn.commit()
     cursor.close()
     conn.close()
 
 
+# =========================================================
+# CV HISTORY HELPERS
+# =========================================================
 def save_cv_for_user(
     user_email: str,
     original_name: str,
@@ -456,6 +512,111 @@ def get_uploaded_cvs_by_user(user_email: str):
     return cvs
 
 
+# =========================================================
+# APPLICATION HELPERS
+# =========================================================
+def save_job_application_for_user(user_email: str, job: dict, status: str = "Applied"):
+    external_job_id = str(
+        job.get("external_job_id")
+        or job.get("id")
+        or job.get("job_id")
+        or f"adzuna-{datetime.now().timestamp()}"
+    )
+
+    source_name = str(job.get("source_name") or "Adzuna")
+    title = str(job.get("title") or job.get("job_title") or "")
+    company = str(job.get("company") or "")
+    location = str(job.get("location") or "")
+    apply_url = str(job.get("apply_url") or job.get("redirect_url") or "")
+    notes = str(job.get("notes") or "")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id
+        FROM job_applications
+        WHERE user_email = ? AND external_job_id = ?
+    """, (user_email, external_job_id))
+    existing = cursor.fetchone()
+
+    if existing:
+        cursor.execute("""
+            UPDATE job_applications
+            SET status = ?, notes = ?, apply_url = ?, title = ?, company = ?, location = ?
+            WHERE user_email = ? AND external_job_id = ?
+        """, (
+            status, notes, apply_url, title, company, location,
+            user_email, external_job_id
+        ))
+    else:
+        cursor.execute("""
+            INSERT INTO job_applications (
+                user_email, external_job_id, source_name, title, company,
+                location, apply_url, status, notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_email, external_job_id, source_name, title, company,
+            location, apply_url, status, notes
+        ))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def get_job_applications_by_user(user_email: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, external_job_id, source_name, title, company, location,
+               apply_url, status, notes, applied_at
+        FROM job_applications
+        WHERE user_email = ?
+        ORDER BY applied_at DESC
+    """, (user_email,))
+
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    applications = []
+    for row in rows:
+        applications.append({
+            "id": row[0],
+            "external_job_id": row[1],
+            "source_name": row[2],
+            "title": row[3],
+            "company": row[4],
+            "location": row[5],
+            "apply_url": row[6],
+            "status": row[7],
+            "notes": row[8] or "",
+            "applied_at": str(row[9]) if row[9] else "",
+        })
+    return applications
+
+
+def update_job_application_status_for_user(user_email: str, application_id: int, status: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE job_applications
+        SET status = ?
+        WHERE id = ? AND user_email = ?
+    """, (status, application_id, user_email))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+# =========================================================
+# TEXT / NLP HELPERS
+# =========================================================
 def normalize_tokens(text: str) -> list[str]:
     tokens = word_tokenize(text)
     clean = []
@@ -500,6 +661,9 @@ def extract_qualifications(text: str) -> list[str]:
     return keyword_match(text, QUALIFICATION_KEYWORDS)
 
 
+# =========================================================
+# AZURE HELPER
+# =========================================================
 def upload_cv_to_azure(file_path: str, blob_name: str) -> str | None:
     if cv_container_client is None:
         print("Azure CV container client not configured. Skipping upload.")
@@ -516,6 +680,9 @@ def upload_cv_to_azure(file_path: str, blob_name: str) -> str | None:
     return blob_client.url
 
 
+# =========================================================
+# FILE TEXT EXTRACTION
+# =========================================================
 def extract_text_from_pdf(path: str) -> str:
     try:
         reader = PdfReader(path)
@@ -543,12 +710,161 @@ def extract_text_generic(path: str) -> str:
         return ""
 
 
-def build_profile_analytics(saved_jobs: list, uploaded_cvs: list):
+# =========================================================
+# CSV MATCHING (KEEP AS FALLBACK / EXTRA)
+# =========================================================
+def generate_job_explanation(matched_skills, missing_skills):
+    if matched_skills and not missing_skills:
+        return f"You strongly match this role because you already have {', '.join(matched_skills[:4])}."
+    if matched_skills and missing_skills:
+        return (
+            f"You match this role through {', '.join(matched_skills[:4])}, "
+            f"but could improve with {', '.join(missing_skills[:4])}."
+        )
+    if missing_skills:
+        return f"This role highlights useful growth areas like {', '.join(missing_skills[:4])}."
+    return "Limited matching detail available for this role."
+
+
+# =========================================================
+# ADZUNA HELPERS
+# =========================================================
+def build_search_query_from_skills(skills: list[str]) -> str:
+    if not skills:
+        return "software engineer"
+
+    lowered_skills = [str(skill).lower() for skill in skills]
+
+    priority_terms = [
+        "python", "java", "javascript", "typescript", "react",
+        "sql", "azure", "aws", "docker", "machine learning",
+        "data analysis", "power bi", "django", "flask",
+        "figma", "ui", "ux", "cloud"
+    ]
+
+    picked = [term for term in priority_terms if term in lowered_skills]
+
+    if not picked:
+        picked = lowered_skills[:4]
+
+    return " ".join(picked[:4])
+
+
+def normalize_adzuna_job(job: dict, user_skills: list[str], user_quals: list[str]) -> dict:
+    title = job.get("title") or "Untitled role"
+    company = (job.get("company") or {}).get("display_name", "")
+    location = (job.get("location") or {}).get("display_name", "")
+    description = job.get("description") or ""
+    category = ((job.get("category") or {}).get("label", "") or "").replace(" Jobs", "")
+    redirect_url = job.get("redirect_url") or ""
+
+    combined_text = f"{title} {description} {category}".lower()
+
+    matched_skills = [skill for skill in user_skills if str(skill).lower() in combined_text]
+    missing_skills = [
+        skill for skill in SKILL_KEYWORDS
+        if skill.lower() in combined_text and skill.lower() not in [str(s).lower() for s in user_skills]
+    ]
+    missing_qualifications = [
+        qual for qual in QUALIFICATION_KEYWORDS
+        if qual.lower() in combined_text and qual.lower() not in [str(q).lower() for q in user_quals]
+    ]
+
+    skill_score = len(matched_skills)
+    qual_score = sum(1 for q in user_quals if str(q).lower() in combined_text)
+    total_score = skill_score * 2 + qual_score
+
+    total_relevant = len(matched_skills) + len(missing_skills)
+    match_percentage = round((len(matched_skills) / total_relevant) * 100) if total_relevant > 0 else 0
+
+    explanation = generate_job_explanation(matched_skills, missing_skills)
+
+    return {
+        "job_id": f"adzuna-{job.get('id')}",
+        "external_job_id": str(job.get("id")),
+        "source_name": "Adzuna",
+        "title": title,
+        "company": company,
+        "location": location,
+        "industry": category,
+        "description": description[:500],
+        "apply_url": redirect_url,
+        "redirect_url": redirect_url,
+        "total_score": total_score,
+        "skill_score": skill_score,
+        "qual_score": qual_score,
+        "match_percentage": match_percentage,
+        "matched_skills": matched_skills,
+        "missing_skills": missing_skills[:8],
+        "missing_qualifications": missing_qualifications[:5],
+        "explanation": explanation,
+    }
+
+
+def search_live_jobs_adzuna(
+    skills: list[str],
+    qualifications: list[str],
+    where: str = "",
+    page: int = 1,
+    results_per_page: int = 20,
+):
+    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
+        raise RuntimeError("Adzuna API credentials are missing.")
+
+    query_text = build_search_query_from_skills(skills)
+
+    url = f"https://api.adzuna.com/v1/api/jobs/{ADZUNA_COUNTRY}/search/{page}"
+    params = {
+        "app_id": ADZUNA_APP_ID,
+        "app_key": ADZUNA_APP_KEY,
+        "results_per_page": results_per_page,
+        "what": query_text,
+        "content-type": "application/json",
+    }
+
+    if where:
+        params["where"] = where
+
+    response = requests.get(url, params=params, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+
+    raw_jobs = payload.get("results", [])
+
+    normalized_jobs = [
+        normalize_adzuna_job(job, skills, qualifications)
+        for job in raw_jobs
+    ]
+
+    normalized_jobs = [job for job in normalized_jobs if job["total_score"] > 0]
+    normalized_jobs.sort(
+        key=lambda j: (j["match_percentage"], j["total_score"]),
+        reverse=True,
+    )
+
+    return {
+        "jobs": normalized_jobs,
+        "metadata": {
+            "source": "Adzuna",
+            "query_used": query_text,
+            "total_results_returned": len(raw_jobs),
+            "jobs_with_matches": len(normalized_jobs),
+            "page": page,
+            "results_per_page": results_per_page,
+        },
+    }
+
+
+# =========================================================
+# PROFILE ANALYTICS
+# =========================================================
+def build_profile_analytics(saved_jobs: list, uploaded_cvs: list, applications: list):
     skill_counter = {}
     qualification_counter = {}
     missing_skill_counter = {}
     role_counter = {}
     industry_counter = {}
+    status_counter = {}
 
     total_match_rate = 0
     strong_matches = 0
@@ -589,6 +905,10 @@ def build_profile_analytics(saved_jobs: list, uploaded_cvs: list):
             if key:
                 missing_skill_counter[key] = missing_skill_counter.get(key, 0) + 1
 
+    for application in applications:
+        status = str(application.get("status", "Applied"))
+        status_counter[status] = status_counter.get(status, 0) + 1
+
     all_extracted_skills = [
         skill for skill, _ in sorted(
             skill_counter.items(),
@@ -619,15 +939,21 @@ def build_profile_analytics(saved_jobs: list, uploaded_cvs: list):
         )[:5]
     ]
 
+    application_status_breakdown = [
+        {"name": name, "count": count}
+        for name, count in sorted(
+            status_counter.items(),
+            key=lambda x: (-x[1], x[0])
+        )
+    ]
+
     best_fit_role = role_breakdown[0]["name"] if role_breakdown else ""
     best_fit_industry = (
         sorted(industry_counter.items(), key=lambda x: (-x[1], x[0]))[0][0]
         if industry_counter else ""
     )
 
-    average_match_rate = (
-        round(total_match_rate / len(saved_jobs)) if saved_jobs else 0
-    )
+    average_match_rate = round(total_match_rate / len(saved_jobs)) if saved_jobs else 0
 
     return {
         "all_extracted_skills": all_extracted_skills,
@@ -636,20 +962,50 @@ def build_profile_analytics(saved_jobs: list, uploaded_cvs: list):
             "average_match_rate": average_match_rate,
             "saved_jobs_count": len(saved_jobs),
             "uploaded_cv_count": len(uploaded_cvs),
+            "applications_count": len(applications),
+            "applied_jobs_count": len(applications),
             "strong_matches": strong_matches,
             "good_matches": good_matches,
             "weak_matches": weak_matches,
             "top_missing_skills": top_missing_skills,
             "role_breakdown": role_breakdown,
+            "application_status_breakdown": application_status_breakdown,
             "best_fit_role": best_fit_role,
             "best_fit_industry": best_fit_industry,
         },
     }
 
 
+# =========================================================
+# ROUTES
+# =========================================================
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/api/test-adzuna", methods=["GET"])
+def test_adzuna():
+    app_id = os.getenv("ADZUNA_APP_ID")
+    app_key = os.getenv("ADZUNA_APP_KEY")
+    country = os.getenv("ADZUNA_COUNTRY", "ie")
+
+    url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
+    params = {
+        "app_id": app_id,
+        "app_key": app_key,
+        "results_per_page": 5,
+        "what": "software engineer",
+        "where": "dublin",
+        "content-type": "application/json",
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=20)
+        response.raise_for_status()
+        return jsonify(response.json()), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/register", methods=["POST"])
@@ -681,7 +1037,7 @@ def register():
             "id": user["id"],
             "name": user["name"],
             "email": user["email"],
-        },
+        }
     }), 201
 
 
@@ -712,7 +1068,7 @@ def login():
             "id": user["id"],
             "name": user["name"],
             "email": user["email"],
-        },
+        }
     }), 200
 
 
@@ -888,6 +1244,12 @@ def match_jobs():
     df["missing_qualifications"] = df["__full_text"].apply(
         lambda text: find_missing_qualifications(text, user_quals)
     )
+    df["explanation"] = df.apply(
+        lambda row: generate_job_explanation(
+            row["matched_skills"], row["missing_skills"]
+        ),
+        axis=1
+    )
 
     df = df[df["total_score"] > 0]
     jobs_with_matches = len(df)
@@ -912,12 +1274,44 @@ def match_jobs():
     return jsonify({
         "jobs": jobs,
         "metadata": {
+            "source": "csv",
             "total_jobs_loaded": int(len(job_df)),
             "jobs_with_matches": int(jobs_with_matches),
             "top_n": int(top_n),
             "match_coverage_ratio": jobs_with_matches / float(len(job_df)),
         },
     }), 200
+
+
+@app.route("/api/live-jobs", methods=["POST"])
+@jwt_required()
+def live_jobs():
+    data = request.get_json(silent=True) or {}
+
+    raw_skills = data.get("skills", [])
+    raw_quals = data.get("qualifications", [])
+    where = str(data.get("where", "")).strip()
+    page = int(data.get("page", 1) or 1)
+    results_per_page = int(data.get("results_per_page", 20) or 20)
+
+    if not isinstance(raw_skills, list):
+        return jsonify({"error": "skills must be a list"}), 400
+
+    if not isinstance(raw_quals, list):
+        return jsonify({"error": "qualifications must be a list"}), 400
+
+    try:
+        results = search_live_jobs_adzuna(
+            skills=raw_skills,
+            qualifications=raw_quals,
+            where=where,
+            page=page,
+            results_per_page=results_per_page,
+        )
+        return jsonify(results), 200
+    except Exception as e:
+        print("Adzuna live jobs error:", e)
+        return jsonify({"error": f"Could not fetch live jobs: {str(e)}"}), 500
 
 
 @app.route("/api/save-job", methods=["POST"])
@@ -936,12 +1330,12 @@ def save_job():
     if not saved:
         return jsonify({
             "message": "Job already saved",
-            "saved_jobs": jobs,
+            "saved_jobs": jobs
         }), 200
 
     return jsonify({
         "message": "Job saved successfully",
-        "saved_jobs": jobs,
+        "saved_jobs": jobs
     }), 201
 
 
@@ -968,7 +1362,75 @@ def remove_saved_job():
 
     return jsonify({
         "message": "Job removed",
-        "saved_jobs": jobs,
+        "saved_jobs": jobs
+    }), 200
+
+
+@app.route("/api/apply-job", methods=["POST"])
+@jwt_required()
+def apply_job():
+    user_email = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    job = data.get("job")
+
+    if not isinstance(job, dict):
+        return jsonify({"error": "No job provided"}), 400
+
+    apply_url = job.get("apply_url") or job.get("redirect_url")
+    if not apply_url:
+        return jsonify({"error": "This job has no application URL"}), 400
+
+    save_job_application_for_user(
+        user_email=user_email,
+        job=job,
+        status="Applied"
+    )
+
+    applications = get_job_applications_by_user(user_email)
+
+    return jsonify({
+        "message": "Application recorded",
+        "apply_url": apply_url,
+        "applications": applications
+    }), 200
+
+
+@app.route("/api/applications", methods=["GET"])
+@jwt_required()
+def get_applications():
+    user_email = get_jwt_identity()
+    applications = get_job_applications_by_user(user_email)
+    return jsonify({"applications": applications}), 200
+
+
+@app.route("/api/update-application-status", methods=["POST"])
+@jwt_required()
+def update_application_status():
+    user_email = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+
+    application_id = data.get("application_id")
+    status = str(data.get("status", "")).strip()
+
+    allowed_statuses = {
+        "Applied",
+        "Interviewing",
+        "Rejected",
+        "Offer",
+    }
+
+    if not application_id:
+        return jsonify({"error": "application_id is required"}), 400
+
+    if status not in allowed_statuses:
+        return jsonify({"error": "Invalid status"}), 400
+
+    update_job_application_status_for_user(user_email, int(application_id), status)
+    applications = get_job_applications_by_user(user_email)
+
+    return jsonify({
+        "message": "Application status updated",
+        "applications": applications
     }), 200
 
 
@@ -983,7 +1445,13 @@ def profile_data():
 
     saved_jobs = get_saved_jobs_by_user(user_email)
     uploaded_cvs = get_uploaded_cvs_by_user(user_email)
-    profile_bits = build_profile_analytics(saved_jobs, uploaded_cvs)
+    applications = get_job_applications_by_user(user_email)
+
+    profile_bits = build_profile_analytics(
+        saved_jobs=saved_jobs,
+        uploaded_cvs=uploaded_cvs,
+        applications=applications,
+    )
 
     return jsonify({
         "user": {
@@ -993,17 +1461,24 @@ def profile_data():
         },
         "saved_jobs": saved_jobs,
         "uploaded_cvs": uploaded_cvs,
+        "applications": applications,
         "all_extracted_skills": profile_bits["all_extracted_skills"],
         "all_extracted_qualifications": profile_bits["all_extracted_qualifications"],
         "analytics": profile_bits["analytics"],
     }), 200
 
 
+# =========================================================
+# RUN
+# =========================================================
 if __name__ == "__main__":
     print("SQL SERVER =", AZURE_SQL_SERVER)
     print("SQL DATABASE =", AZURE_SQL_DATABASE)
     print("SQL USER =", AZURE_SQL_USERNAME)
     print("Available ODBC drivers:", pyodbc.drivers())
+    print("ADZUNA COUNTRY =", ADZUNA_COUNTRY)
+    print("ADZUNA APP ID FOUND =", bool(ADZUNA_APP_ID))
+    print("ADZUNA APP KEY FOUND =", bool(ADZUNA_APP_KEY))
 
     init_db()
     app.run(host="0.0.0.0", port=5000, debug=True)
