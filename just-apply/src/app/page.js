@@ -176,7 +176,7 @@ export default function HomePage() {
       setQualifications(data.qualifications || []);
       setPreview(data.text_preview || "");
       setAzureBlobUrl(data.azure_blob_url || "");
-      setStatus("CV parsed. Searching live jobs...");
+      setStatus("CV parsed. Searching live jobs in the US...");
 
       const liveRes = await fetch(`${API_BASE_URL}/api/live-jobs`, {
         method: "POST",
@@ -187,7 +187,7 @@ export default function HomePage() {
         body: JSON.stringify({
           skills: data.skills || [],
           qualifications: data.qualifications || [],
-          where: "Dublin",
+          where: "",
           page: 1,
           results_per_page: 20,
         }),
@@ -197,7 +197,11 @@ export default function HomePage() {
 
       if (!liveRes.ok) {
         console.error("Live jobs error:", liveData);
-        setStatus(liveData.error || "CV parsed, but live jobs could not be loaded.");
+        const backendError =
+          liveData?.error ||
+          liveData?.message ||
+          `Live jobs failed with status ${liveRes.status}`;
+        setStatus(backendError);
         return;
       }
 
@@ -215,13 +219,9 @@ export default function HomePage() {
       setJobStats(liveData.metadata || null);
       setShowProfilePrompt(true);
 
-      if (liveData.metadata) {
-        setStatus(
-          `CV parsed successfully. Loaded ${returnedJobs.length} live jobs from ${liveData.metadata.source || "Adzuna"}.`
-        );
-      } else {
-        setStatus(`CV parsed successfully. Loaded ${returnedJobs.length} live jobs.`);
-      }
+      setStatus(
+        `CV parsed successfully. Loaded ${returnedJobs.length} live US jobs from ${liveData.metadata?.source || "Adzuna"}.`
+      );
     } catch (err) {
       console.error(err);
       setStatus("Error: could not connect to backend.");
@@ -483,7 +483,7 @@ export default function HomePage() {
 
         <section className="hero-row">
           <div>
-            <p className="eyebrow">AI-powered live job discovery</p>
+            <p className="eyebrow">AI-powered live US job discovery</p>
             <h1 className="page-title">Stop searching for jobs. Let jobs find you.</h1>
             <p className="page-subtitle">
               Upload your CV, get personalised live job matches, understand why
@@ -504,7 +504,7 @@ export default function HomePage() {
             <h4>How to use Just Apply</h4>
             <ul className="guide-list">
               <li>Upload your CV</li>
-              <li>Review live job matches</li>
+              <li>Review live US job matches</li>
               <li>Save or apply to jobs</li>
               <li>Track applications in your profile</li>
             </ul>
@@ -706,7 +706,7 @@ export default function HomePage() {
                 {jobStats && (
                   <div className="summary-pill">
                     {jobStats.source || "Adzuna"} •{" "}
-                    {jobStats.jobs_with_matches || filteredJobs.length} matched
+                    {jobStats.total_results_returned || filteredJobs.length} results
                   </div>
                 )}
               </div>
@@ -858,9 +858,7 @@ export default function HomePage() {
                       {Array.isArray(job.missing_skills) &&
                         job.missing_skills.length > 0 && (
                           <div className="job-tags-block">
-                            <div className="job-tags-title">
-                              Skills to improve
-                            </div>
+                            <div className="job-tags-title">Skills to improve</div>
                             <div className="chips">
                               {job.missing_skills.map((skill, skillIdx) => (
                                 <span
