@@ -89,11 +89,6 @@ export default function ProfilePage() {
         return;
       }
 
-      setProfileData((prev) => ({
-        ...prev,
-        applications: data.applications || [],
-      }));
-
       fetchProfileData();
     } catch (err) {
       console.error(err);
@@ -117,6 +112,7 @@ export default function ProfilePage() {
   const extractedQualifications = profileData?.all_extracted_qualifications || [];
   const applications = profileData?.applications || [];
   const analytics = profileData?.analytics || {};
+  const dbMode = profileData?.db_mode || "unknown";
 
   const strongMatches = analytics.strong_matches || 0;
   const goodMatches = analytics.good_matches || 0;
@@ -198,6 +194,12 @@ export default function ProfilePage() {
           </div>
         </header>
 
+        {dbMode === "sqlite" && (
+          <div className="db-mode-banner">
+            Running in local SQLite fallback mode. Azure SQL is currently unavailable.
+          </div>
+        )}
+
         <section className="hero-row">
           <div>
             <p className="eyebrow">Your personal hub</p>
@@ -269,6 +271,34 @@ export default function ProfilePage() {
                     {analytics.average_match_rate || 0}%
                   </div>
                 </div>
+
+                <div className="stat-card">
+                  <div className="stat-label">Applications</div>
+                  <div className="stat-value">
+                    {analytics.applications_count || 0}
+                  </div>
+                </div>
+
+                <div className="stat-card">
+                  <div className="stat-label">Interviewing</div>
+                  <div className="stat-value">
+                    {analytics.interviewing_count || 0}
+                  </div>
+                </div>
+
+                <div className="stat-card">
+                  <div className="stat-label">Offers</div>
+                  <div className="stat-value">
+                    {analytics.offer_count || 0}
+                  </div>
+                </div>
+
+                <div className="stat-card">
+                  <div className="stat-label">Rejected</div>
+                  <div className="stat-value">
+                    {analytics.rejected_count || 0}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -328,7 +358,7 @@ export default function ProfilePage() {
             <div className="jobs-card">
               <div className="jobs-header">
                 <div>
-                  <p className="section-kicker">Applications</p>
+                  <p className="section-kicker">Career pipeline</p>
                   <h4>Application Journey</h4>
                 </div>
               </div>
@@ -434,7 +464,7 @@ export default function ProfilePage() {
             <div className="jobs-card">
               <div className="jobs-header">
                 <div>
-                  <p className="section-kicker">Applications</p>
+                  <p className="section-kicker">Tracked applications</p>
                   <h4>Applied Jobs</h4>
                 </div>
               </div>

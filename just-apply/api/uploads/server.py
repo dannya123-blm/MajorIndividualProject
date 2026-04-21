@@ -107,7 +107,7 @@ swagger = Swagger(
         "info": {
             "title": "Just Apply API",
             "description": "API for CV upload, NLP extraction, live Adzuna jobs, saved jobs, applications, profile analytics, and authentication.",
-            "version": "4.0.0",
+            "version": "5.0.0",
         }
     },
 )
@@ -197,7 +197,6 @@ def get_sql_driver():
 
 def get_azure_connection():
     driver = get_sql_driver()
-
     conn_str = (
         f"DRIVER={{{driver}}};"
         f"SERVER={AZURE_SQL_SERVER};"
@@ -208,7 +207,6 @@ def get_azure_connection():
         "TrustServerCertificate=no;"
         "Connection Timeout=30;"
     )
-
     return pyodbc.connect(conn_str)
 
 
@@ -408,7 +406,6 @@ def init_sqlite_db():
     conn.close()
     print("SQLite tables ready.")
 
-
 # =========================================================
 # USER HELPERS
 # =========================================================
@@ -502,7 +499,6 @@ def create_user(name: str, email: str, password_hash: str) -> dict:
         "email": row[2],
         "password_hash": row[3],
     }
-
 
 # =========================================================
 # SAVED JOBS HELPERS
@@ -663,7 +659,6 @@ def remove_saved_job_for_user(user_email: str, job_id: str):
     cursor.close()
     conn.close()
 
-
 # =========================================================
 # CV HISTORY HELPERS
 # =========================================================
@@ -779,7 +774,6 @@ def get_uploaded_cvs_by_user(user_email: str) -> list:
             "uploaded_at": str(row[6]) if row[6] else "",
         })
     return cvs
-
 
 # =========================================================
 # APPLICATION HELPERS
@@ -955,7 +949,6 @@ def update_job_application_status_for_user(user_email: str, application_id: int,
     cursor.close()
     conn.close()
 
-
 # =========================================================
 # NLP HELPERS
 # =========================================================
@@ -1002,7 +995,6 @@ def extract_skills(text: str) -> list[str]:
 def extract_qualifications(text: str) -> list[str]:
     return keyword_match(text, QUALIFICATION_KEYWORDS)
 
-
 # =========================================================
 # FILE HELPERS
 # =========================================================
@@ -1048,7 +1040,6 @@ def extract_text_generic(path: str) -> str:
         print("Generic text parse error:", e)
         return ""
 
-
 # =========================================================
 # MATCHING / EXPLANATION
 # =========================================================
@@ -1063,7 +1054,6 @@ def generate_job_explanation(matched_skills, missing_skills):
     if missing_skills:
         return f"This role highlights useful growth areas like {', '.join(missing_skills[:4])}."
     return "This role was surfaced as a relevant live opportunity based on your profile."
-
 
 # =========================================================
 # ADZUNA HELPERS
@@ -1275,7 +1265,6 @@ def search_live_jobs_adzuna(
         },
     }
 
-
 # =========================================================
 # PROFILE ANALYTICS
 # =========================================================
@@ -1385,6 +1374,9 @@ def build_profile_analytics(saved_jobs: list, uploaded_cvs: list, applications: 
             "uploaded_cv_count": len(uploaded_cvs),
             "applications_count": len(applications),
             "applied_jobs_count": len(applications),
+            "interviewing_count": len([a for a in applications if a.get("status") == "Interviewing"]),
+            "offer_count": len([a for a in applications if a.get("status") == "Offer"]),
+            "rejected_count": len([a for a in applications if a.get("status") == "Rejected"]),
             "strong_matches": strong_matches,
             "good_matches": good_matches,
             "weak_matches": weak_matches,
@@ -1396,13 +1388,20 @@ def build_profile_analytics(saved_jobs: list, uploaded_cvs: list, applications: 
         },
     }
 
-
 # =========================================================
 # ROUTES
 # =========================================================
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "db_mode": DB_MODE}), 200
+
+
+@app.route("/api/debug-db-mode", methods=["GET"])
+def debug_db_mode():
+    return jsonify({
+        "db_mode": DB_MODE,
+        "sqlite_path": SQLITE_PATH,
+    }), 200
 
 
 @app.route("/api/test-adzuna", methods=["GET"])
@@ -1481,7 +1480,8 @@ def register():
             "id": user["id"],
             "name": user["name"],
             "email": user["email"],
-        }
+        },
+        "db_mode": DB_MODE,
     }), 201
 
 
@@ -1512,7 +1512,8 @@ def login():
             "id": user["id"],
             "name": user["name"],
             "email": user["email"],
-        }
+        },
+        "db_mode": DB_MODE,
     }), 200
 
 
@@ -1530,7 +1531,8 @@ def me():
             "id": user["id"],
             "name": user["name"],
             "email": user["email"],
-        }
+        },
+        "db_mode": DB_MODE,
     }), 200
 
 
@@ -1594,122 +1596,8 @@ def upload_and_parse_cv():
         "qualifications": qualifications,
         "text_preview": preview,
         "azure_blob_url": blob_url,
+        "db_mode": DB_MODE,
     }), 201
-
-
-@app.route("/api/match-jobs", methods=["POST"])
-def match_jobs():
-    global job_df
-    if job_df is None:
-        return jsonify({"error": "Job dataset not loaded on server"}), 500
-
-    data = request.get_json(silent=True) or {}
-
-    raw_skills = data.get("skills", [])
-    raw_quals = data.get("qualifications", [])
-
-    if not isinstance(raw_skills, list):
-        return jsonify({"error": "skills must be a list"}), 400
-
-    if not isinstance(raw_quals, list):
-        return jsonify({"error": "qualifications must be a list"}), 400
-
-    user_skills = [str(s).lower() for s in raw_skills]
-    user_quals = [str(q).lower() for q in raw_quals]
-
-    top_n = data.get("top_n", 10)
-    try:
-        top_n = int(top_n)
-    except (ValueError, TypeError):
-        top_n = 10
-
-    if top_n <= 0:
-        top_n = 10
-
-    if not user_skills and not user_quals:
-        return jsonify({
-            "jobs": [],
-            "metadata": {
-                "message": "No skills or qualifications provided.",
-                "total_jobs_loaded": int(len(job_df)),
-                "jobs_with_matches": 0,
-                "top_n": int(top_n),
-            },
-        }), 200
-
-    df = job_df.copy()
-
-    def full_text_from_row(row):
-        parts = []
-        for value in row.values:
-            if isinstance(value, str):
-                parts.append(value.lower())
-        return " ".join(parts)
-
-    def find_missing_skills(text: str, skills: list[str]) -> list[str]:
-        missing = []
-        for skill in SKILL_KEYWORDS:
-            if skill.lower() in text and skill.lower() not in skills:
-                missing.append(skill)
-        return missing
-
-    def find_matched_skills(text: str, skills: list[str]) -> list[str]:
-        matched = []
-        for skill in skills:
-            if skill in text:
-                matched.append(skill)
-        return matched
-
-    def find_missing_qualifications(text: str, quals: list[str]) -> list[str]:
-        missing = []
-        for qual in QUALIFICATION_KEYWORDS:
-            if qual.lower() in text and qual.lower() not in quals:
-                missing.append(qual)
-        return missing
-
-    df["__full_text"] = df.apply(full_text_from_row, axis=1)
-
-    def compute_scores(text: str):
-        skill_score = sum(1 for s in user_skills if s in text)
-        qual_score = sum(1 for q in user_quals if q in text)
-        total = skill_score * 2 + qual_score
-        return skill_score, qual_score, total
-
-    df["skill_score"], df["qual_score"], df["total_score"] = zip(
-        *df["__full_text"].apply(compute_scores)
-    )
-
-    df["matched_skills"] = df["__full_text"].apply(
-        lambda text: find_matched_skills(text, user_skills)
-    )
-    df["missing_skills"] = df["__full_text"].apply(
-        lambda text: find_missing_skills(text, user_skills)
-    )
-    df["missing_qualifications"] = df["__full_text"].apply(
-        lambda text: find_missing_qualifications(text, user_quals)
-    )
-    df["explanation"] = df.apply(
-        lambda row: generate_job_explanation(
-            row["matched_skills"], row["missing_skills"]
-        ),
-        axis=1
-    )
-
-    df = df.sort_values(by="total_score", ascending=False).head(top_n)
-    df = df.drop(columns=["__full_text"])
-    df = df.fillna("")
-
-    jobs = df.to_dict(orient="records")
-
-    return jsonify({
-        "jobs": jobs,
-        "metadata": {
-            "source": "csv",
-            "total_jobs_loaded": int(len(job_df)),
-            "jobs_with_matches": len([job for job in jobs if int(job.get("total_score", 0) or 0) > 0]),
-            "top_n": int(top_n),
-        },
-    }), 200
 
 
 @app.route("/api/live-jobs", methods=["POST"])
@@ -1737,6 +1625,7 @@ def live_jobs():
             page=page,
             results_per_page=results_per_page,
         )
+        results["db_mode"] = DB_MODE
         return jsonify(results), 200
     except Exception as e:
         print("Adzuna live jobs error:", e)
@@ -1759,12 +1648,14 @@ def save_job():
     if not saved:
         return jsonify({
             "message": "Job already saved",
-            "saved_jobs": jobs
+            "saved_jobs": jobs,
+            "db_mode": DB_MODE,
         }), 200
 
     return jsonify({
         "message": "Job saved successfully",
-        "saved_jobs": jobs
+        "saved_jobs": jobs,
+        "db_mode": DB_MODE,
     }), 201
 
 
@@ -1773,7 +1664,7 @@ def save_job():
 def get_saved_jobs():
     user_email = get_jwt_identity()
     jobs = get_saved_jobs_by_user(user_email)
-    return jsonify({"saved_jobs": jobs}), 200
+    return jsonify({"saved_jobs": jobs, "db_mode": DB_MODE}), 200
 
 
 @app.route("/api/remove-saved-job", methods=["POST"])
@@ -1791,7 +1682,8 @@ def remove_saved_job():
 
     return jsonify({
         "message": "Job removed",
-        "saved_jobs": jobs
+        "saved_jobs": jobs,
+        "db_mode": DB_MODE,
     }), 200
 
 
@@ -1820,7 +1712,8 @@ def apply_job():
     return jsonify({
         "message": "Application recorded",
         "apply_url": apply_url,
-        "applications": applications
+        "applications": applications,
+        "db_mode": DB_MODE,
     }), 200
 
 
@@ -1829,7 +1722,7 @@ def apply_job():
 def get_applications():
     user_email = get_jwt_identity()
     applications = get_job_applications_by_user(user_email)
-    return jsonify({"applications": applications}), 200
+    return jsonify({"applications": applications, "db_mode": DB_MODE}), 200
 
 
 @app.route("/api/update-application-status", methods=["POST"])
@@ -1854,7 +1747,8 @@ def update_application_status():
 
     return jsonify({
         "message": "Application status updated",
-        "applications": applications
+        "applications": applications,
+        "db_mode": DB_MODE,
     }), 200
 
 

@@ -18,6 +18,7 @@ export default function HomePage() {
   const router = useRouter();
 
   const [currentUser, setCurrentUser] = useState(null);
+  const [dbMode, setDbMode] = useState("unknown");
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState("");
   const [status, setStatus] = useState("");
@@ -54,6 +55,7 @@ export default function HomePage() {
 
       const data = await res.json();
       setCurrentUser(data.user);
+      if (data.db_mode) setDbMode(data.db_mode);
     } catch (err) {
       console.error(err);
       setStatus("Could not connect to backend.");
@@ -72,6 +74,7 @@ export default function HomePage() {
 
       const data = await res.json();
       setSavedJobs(data.saved_jobs || []);
+      if (data.db_mode) setDbMode(data.db_mode);
     } catch (err) {
       console.error(err);
     }
@@ -89,6 +92,7 @@ export default function HomePage() {
 
       const data = await res.json();
       setApplications(data.applications || []);
+      if (data.db_mode) setDbMode(data.db_mode);
     } catch (err) {
       console.error(err);
     }
@@ -176,6 +180,7 @@ export default function HomePage() {
       setQualifications(data.qualifications || []);
       setPreview(data.text_preview || "");
       setAzureBlobUrl(data.azure_blob_url || "");
+      if (data.db_mode) setDbMode(data.db_mode);
       setStatus("CV parsed. Searching live jobs in the US...");
 
       const liveRes = await fetch(`${API_BASE_URL}/api/live-jobs`, {
@@ -204,6 +209,8 @@ export default function HomePage() {
         setStatus(backendError);
         return;
       }
+
+      if (liveData.db_mode) setDbMode(liveData.db_mode);
 
       const returnedJobs = (liveData.jobs || []).map((job, index) => ({
         ...job,
@@ -241,6 +248,7 @@ export default function HomePage() {
 
       const data = await res.json();
       setSavedJobs(data.saved_jobs || []);
+      if (data.db_mode) setDbMode(data.db_mode);
     } catch (err) {
       console.error(err);
     }
@@ -265,6 +273,7 @@ export default function HomePage() {
       }
 
       setApplications(data.applications || []);
+      if (data.db_mode) setDbMode(data.db_mode);
       window.open(data.apply_url, "_blank", "noopener,noreferrer");
     } catch (err) {
       console.error(err);
@@ -273,14 +282,14 @@ export default function HomePage() {
   };
 
   const isJobSaved = (jobId) => {
-    return savedJobs.some((job) => job.job_id === jobId);
+    return savedJobs.some((job) => String(job.job_id) === String(jobId));
   };
 
-  const hasAppliedToJob = (externalJobId, title) => {
+  const hasAppliedToJob = (externalJobId) => {
+    if (!externalJobId) return false;
+
     return applications.some(
-      (app) =>
-        app.external_job_id === String(externalJobId) ||
-        (app.title && title && app.title.toLowerCase() === title.toLowerCase())
+      (app) => String(app.external_job_id) === String(externalJobId)
     );
   };
 
@@ -480,6 +489,12 @@ export default function HomePage() {
             <div className="avatar" />
           </div>
         </header>
+
+        {dbMode === "sqlite" && (
+          <div className="db-mode-banner">
+            Running in local SQLite fallback mode. Azure SQL is currently unavailable.
+          </div>
+        )}
 
         <section className="hero-row">
           <div>
@@ -755,10 +770,7 @@ export default function HomePage() {
 
               <div className="jobs-list">
                 {filteredJobs.map((job, idx) => {
-                  const alreadyApplied = hasAppliedToJob(
-                    job.external_job_id,
-                    job.title || job.job_title
-                  );
+                  const alreadyApplied = hasAppliedToJob(job.external_job_id);
 
                   return (
                     <div className="job-item" key={idx}>

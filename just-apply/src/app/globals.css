@@ -38,6 +38,15 @@
   padding: 0 12px;
   outline: none;
 }
+.db-mode-banner {
+  margin-bottom: 20px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  border: 1px solid #f0cba8;
+  background: #fff4ea;
+  color: #8a5a35;
+  font-weight: 700;
+}
 .profile-nav-wrapper {
   position: relative;
   display: flex;
