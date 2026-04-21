@@ -1,6 +1,8 @@
 import os
 import json
+import sqlite3
 from datetime import datetime, timedelta
+from typing import Optional, Any
 
 import requests
 import nltk
@@ -42,7 +44,22 @@ AZURE_SQL_PASSWORD = os.getenv("AZURE_SQL_PASSWORD")
 
 ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
-ADZUNA_COUNTRY = os.getenv("ADZUNA_COUNTRY", "ie")
+ADZUNA_COUNTRY = os.getenv("ADZUNA_COUNTRY", "us")
+
+# =========================================================
+# PATHS
+# =========================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+JOB_CSV_PATH = os.path.join(BASE_DIR, "jobPosts", "jobposts.csv")
+SQLITE_PATH = os.path.join(BASE_DIR, "just_apply_local.db")
+
+# =========================================================
+# DB MODE
+# =========================================================
+DB_MODE = "sqlite"
 
 # =========================================================
 # AZURE BLOB
@@ -51,15 +68,18 @@ blob_service_client = None
 cv_container_client = None
 
 if AZURE_CONNECTION_STRING:
-    blob_service_client = BlobServiceClient.from_connection_string(
-        AZURE_CONNECTION_STRING
-    )
-    cv_container_client = blob_service_client.get_container_client(AZURE_CONTAINER)
+    try:
+        blob_service_client = BlobServiceClient.from_connection_string(
+            AZURE_CONNECTION_STRING
+        )
+        cv_container_client = blob_service_client.get_container_client(AZURE_CONTAINER)
+        print("Azure Blob client ready.")
+    except Exception as e:
+        print("WARNING: Azure Blob init failed:", e)
+        blob_service_client = None
+        cv_container_client = None
 else:
-    print(
-        "WARNING: AZURE_CONNECTION_STRING not set. "
-        "Files will NOT be uploaded to Azure."
-    )
+    print("WARNING: AZURE_CONNECTION_STRING not set. Files will not upload to Azure.")
 
 # =========================================================
 # FLASK APP
@@ -86,23 +106,14 @@ swagger = Swagger(
     template={
         "info": {
             "title": "Just Apply API",
-            "description": "API for CV upload, NLP extraction, Adzuna live jobs, saved jobs, applications, profile analytics, and authentication.",
-            "version": "3.0.0",
+            "description": "API for CV upload, NLP extraction, live Adzuna jobs, saved jobs, applications, profile analytics, and authentication.",
+            "version": "4.0.0",
         }
     },
 )
 
 # =========================================================
-# PATHS
-# =========================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-JOB_CSV_PATH = os.path.join(BASE_DIR, "jobPosts", "jobposts.csv")
-
-# =========================================================
-# OPTIONAL CSV DATASET (KEEPING IT AS FALLBACK / TEST DATA)
+# DATASET FALLBACK
 # =========================================================
 print("Looking for jobposts.csv at:", JOB_CSV_PATH)
 try:
@@ -115,7 +126,7 @@ try:
         job_df = job_df.sample(TEST_SAMPLE_SIZE, random_state=42).reset_index(drop=True)
         print(
             f"[TEST MODE] Subsampled jobposts to {len(job_df)} rows "
-            f"for accuracy testing (requested {TEST_SAMPLE_SIZE})."
+            f"for testing (requested {TEST_SAMPLE_SIZE})."
         )
     else:
         print(
@@ -150,10 +161,9 @@ SKILL_KEYWORDS = [
     "python", "java", "javascript", "typescript", "c#", "c++",
     "react", "next.js", "html", "css", "django", "flask", "node.js",
     "sql", "mysql", "postgresql", "azure", "aws", "docker",
-    "git", "linux", "power bi",
-    "nlp", "natural language processing", "machine learning",
-    "data analysis", "data analytics", "ui", "ux", "figma",
-    "cloud", "kubernetes", "devops", "terraform"
+    "git", "linux", "power bi", "nlp", "natural language processing",
+    "machine learning", "data analysis", "data analytics",
+    "ui", "ux", "figma", "cloud", "kubernetes", "devops", "terraform"
 ]
 
 QUALIFICATION_KEYWORDS = [
@@ -162,14 +172,13 @@ QUALIFICATION_KEYWORDS = [
     "phd", "doctorate",
     "bachelor of science", "bachelor of engineering",
     "bachelor of arts", "master of science", "master of engineering",
-    "master of arts",
-    "honours", "hons", "higher diploma", "postgraduate diploma",
-    "aws certified", "azure certification", "oracle certified",
-    "microsoft certified", "ccna", "comptia"
+    "master of arts", "honours", "hons", "higher diploma",
+    "postgraduate diploma", "aws certified", "azure certification",
+    "oracle certified", "microsoft certified", "ccna", "comptia"
 ]
 
 # =========================================================
-# DATABASE
+# DATABASE HELPERS
 # =========================================================
 def get_sql_driver():
     available = pyodbc.drivers()
@@ -186,7 +195,7 @@ def get_sql_driver():
     )
 
 
-def get_db_connection():
+def get_azure_connection():
     driver = get_sql_driver()
 
     conn_str = (
@@ -203,8 +212,51 @@ def get_db_connection():
     return pyodbc.connect(conn_str)
 
 
+def get_sqlite_connection():
+    conn = sqlite3.connect(SQLITE_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def db_is_sqlite() -> bool:
+    return DB_MODE == "sqlite"
+
+
+def dict_from_row(row: Any) -> dict:
+    if row is None:
+        return {}
+    if isinstance(row, sqlite3.Row):
+        return dict(row)
+    return {}
+
+
+def probe_db_mode():
+    global DB_MODE
+
+    try:
+        conn = get_azure_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        cursor.close()
+        conn.close()
+        DB_MODE = "azure"
+        print("DB MODE: Azure SQL")
+    except Exception as e:
+        DB_MODE = "sqlite"
+        print("DB MODE FALLBACK: SQLite")
+        print("Azure SQL unavailable:", e)
+
+
 def init_db():
-    conn = get_db_connection()
+    if db_is_sqlite():
+        init_sqlite_db()
+    else:
+        init_azure_db()
+
+
+def init_azure_db():
+    conn = get_azure_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -286,19 +338,110 @@ def init_db():
     print("Azure SQL tables ready.")
 
 
+def init_sqlite_db():
+    conn = get_sqlite_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS saved_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_email TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        title TEXT,
+        company TEXT,
+        location TEXT,
+        industry TEXT,
+        total_score INTEGER,
+        skill_score INTEGER,
+        qual_score INTEGER,
+        match_percentage INTEGER,
+        matched_skills TEXT,
+        missing_skills TEXT,
+        missing_qualifications TEXT,
+        raw_job_json TEXT NOT NULL,
+        saved_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_cvs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_email TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        stored_filename TEXT,
+        azure_blob_url TEXT,
+        extracted_skills TEXT,
+        extracted_qualifications TEXT,
+        text_preview TEXT,
+        uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS job_applications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_email TEXT NOT NULL,
+        external_job_id TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        title TEXT,
+        company TEXT,
+        location TEXT,
+        apply_url TEXT,
+        status TEXT NOT NULL DEFAULT 'Applied',
+        notes TEXT,
+        applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print("SQLite tables ready.")
+
+
 # =========================================================
 # USER HELPERS
 # =========================================================
-def get_user_by_email(email: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+def get_user_by_email(email: str) -> Optional[dict]:
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, name, email, password_hash FROM users WHERE email = ?",
+            (email,),
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
 
+        if not row:
+            return None
+
+        row = dict_from_row(row)
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "email": row["email"],
+            "password_hash": row["password_hash"],
+        }
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
     cursor.execute(
         "SELECT id, name, email, password_hash FROM users WHERE email = ?",
-        (email,)
+        (email,),
     )
     row = cursor.fetchone()
-
     cursor.close()
     conn.close()
 
@@ -313,22 +456,43 @@ def get_user_by_email(email: str):
     }
 
 
-def create_user(name: str, email: str, password_hash: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+def create_user(name: str, email: str, password_hash: str) -> dict:
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+            (name, email, password_hash),
+        )
+        conn.commit()
+        cursor.execute(
+            "SELECT id, name, email, password_hash FROM users WHERE email = ?",
+            (email,),
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
 
+        row = dict_from_row(row)
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "email": row["email"],
+            "password_hash": row["password_hash"],
+        }
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-        (name, email, password_hash)
+        (name, email, password_hash),
     )
     conn.commit()
-
     cursor.execute(
         "SELECT id, name, email, password_hash FROM users WHERE email = ?",
-        (email,)
+        (email,),
     )
     row = cursor.fetchone()
-
     cursor.close()
     conn.close()
 
@@ -343,17 +507,37 @@ def create_user(name: str, email: str, password_hash: str):
 # =========================================================
 # SAVED JOBS HELPERS
 # =========================================================
-def get_saved_jobs_by_user(user_email: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+def get_saved_jobs_by_user(user_email: str) -> list:
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT raw_job_json
+            FROM saved_jobs
+            WHERE user_email = ?
+            ORDER BY saved_at DESC
+        """, (user_email,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
 
+        jobs = []
+        for row in rows:
+            row = dict_from_row(row)
+            try:
+                jobs.append(json.loads(row["raw_job_json"]))
+            except Exception:
+                pass
+        return jobs
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
     cursor.execute("""
         SELECT raw_job_json
         FROM saved_jobs
         WHERE user_email = ?
         ORDER BY saved_at DESC
     """, (user_email,))
-
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -367,7 +551,7 @@ def get_saved_jobs_by_user(user_email: str):
     return jobs
 
 
-def save_job_for_user(user_email: str, job: dict):
+def save_job_for_user(user_email: str, job: dict) -> bool:
     job_id = (
         job.get("job_id")
         or job.get("external_job_id")
@@ -378,21 +562,6 @@ def save_job_for_user(user_email: str, job: dict):
 
     if not job_id:
         job_id = f"job-{datetime.now().timestamp()}"
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT id
-        FROM saved_jobs
-        WHERE user_email = ? AND job_id = ?
-    """, (user_email, str(job_id)))
-    existing = cursor.fetchone()
-
-    if existing:
-        cursor.close()
-        conn.close()
-        return False
 
     title = job.get("title") or job.get("job_title") or ""
     company = job.get("company") or ""
@@ -407,6 +576,52 @@ def save_job_for_user(user_email: str, job: dict):
     missing_qualifications = json.dumps(job.get("missing_qualifications", []))
     raw_job_json = json.dumps(job)
 
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id
+            FROM saved_jobs
+            WHERE user_email = ? AND job_id = ?
+        """, (user_email, str(job_id)))
+        existing = cursor.fetchone()
+
+        if existing:
+            cursor.close()
+            conn.close()
+            return False
+
+        cursor.execute("""
+            INSERT INTO saved_jobs (
+                user_email, job_id, title, company, location, industry,
+                total_score, skill_score, qual_score, match_percentage,
+                matched_skills, missing_skills, missing_qualifications, raw_job_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_email, str(job_id), title, company, location, industry,
+            total_score, skill_score, qual_score, match_percentage,
+            matched_skills, missing_skills, missing_qualifications, raw_job_json
+        ))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id
+        FROM saved_jobs
+        WHERE user_email = ? AND job_id = ?
+    """, (user_email, str(job_id)))
+    existing = cursor.fetchone()
+
+    if existing:
+        cursor.close()
+        conn.close()
+        return False
+
     cursor.execute("""
         INSERT INTO saved_jobs (
             user_email, job_id, title, company, location, industry,
@@ -419,7 +634,6 @@ def save_job_for_user(user_email: str, job: dict):
         total_score, skill_score, qual_score, match_percentage,
         matched_skills, missing_skills, missing_qualifications, raw_job_json
     ))
-
     conn.commit()
     cursor.close()
     conn.close()
@@ -427,14 +641,24 @@ def save_job_for_user(user_email: str, job: dict):
 
 
 def remove_saved_job_for_user(user_email: str, job_id: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM saved_jobs
+            WHERE user_email = ? AND job_id = ?
+        """, (user_email, str(job_id)))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return
 
+    conn = get_azure_connection()
+    cursor = conn.cursor()
     cursor.execute("""
         DELETE FROM saved_jobs
         WHERE user_email = ? AND job_id = ?
     """, (user_email, str(job_id)))
-
     conn.commit()
     cursor.close()
     conn.close()
@@ -447,22 +671,41 @@ def save_cv_for_user(
     user_email: str,
     original_name: str,
     stored_filename: str,
-    azure_blob_url: str | None,
+    azure_blob_url: Optional[str],
     skills: list[str],
     qualifications: list[str],
     text_preview: str,
 ):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO user_cvs (
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO user_cvs (
+                user_email, original_name, stored_filename,
+                azure_blob_url, extracted_skills, extracted_qualifications,
+                text_preview
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
             user_email,
             original_name,
             stored_filename,
-            azure_blob_url,
-            extracted_skills,
-            extracted_qualifications,
+            azure_blob_url or "",
+            json.dumps(skills or []),
+            json.dumps(qualifications or []),
+            text_preview or "",
+        ))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO user_cvs (
+            user_email, original_name, stored_filename,
+            azure_blob_url, extracted_skills, extracted_qualifications,
             text_preview
         )
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -475,16 +718,43 @@ def save_cv_for_user(
         json.dumps(qualifications or []),
         text_preview or "",
     ))
-
     conn.commit()
     cursor.close()
     conn.close()
 
 
-def get_uploaded_cvs_by_user(user_email: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+def get_uploaded_cvs_by_user(user_email: str) -> list:
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT original_name, stored_filename, azure_blob_url,
+                   extracted_skills, extracted_qualifications,
+                   text_preview, uploaded_at
+            FROM user_cvs
+            WHERE user_email = ?
+            ORDER BY uploaded_at DESC
+        """, (user_email,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
 
+        cvs = []
+        for row in rows:
+            row = dict_from_row(row)
+            cvs.append({
+                "original_name": row["original_name"],
+                "stored_filename": row["stored_filename"],
+                "azure_blob_url": row["azure_blob_url"],
+                "skills": json.loads(row["extracted_skills"]) if row["extracted_skills"] else [],
+                "qualifications": json.loads(row["extracted_qualifications"]) if row["extracted_qualifications"] else [],
+                "text_preview": row["text_preview"] or "",
+                "uploaded_at": row["uploaded_at"] or "",
+            })
+        return cvs
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
     cursor.execute("""
         SELECT original_name, stored_filename, azure_blob_url,
                extracted_skills, extracted_qualifications,
@@ -493,7 +763,6 @@ def get_uploaded_cvs_by_user(user_email: str):
         WHERE user_email = ?
         ORDER BY uploaded_at DESC
     """, (user_email,))
-
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -530,9 +799,43 @@ def save_job_application_for_user(user_email: str, job: dict, status: str = "App
     apply_url = str(job.get("apply_url") or job.get("redirect_url") or "")
     notes = str(job.get("notes") or "")
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id
+            FROM job_applications
+            WHERE user_email = ? AND external_job_id = ?
+        """, (user_email, external_job_id))
+        existing = cursor.fetchone()
 
+        if existing:
+            cursor.execute("""
+                UPDATE job_applications
+                SET status = ?, notes = ?, apply_url = ?, title = ?, company = ?, location = ?
+                WHERE user_email = ? AND external_job_id = ?
+            """, (
+                status, notes, apply_url, title, company, location,
+                user_email, external_job_id
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO job_applications (
+                    user_email, external_job_id, source_name, title, company,
+                    location, apply_url, status, notes
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                user_email, external_job_id, source_name, title, company,
+                location, apply_url, status, notes
+            ))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
     cursor.execute("""
         SELECT id
         FROM job_applications
@@ -560,16 +863,45 @@ def save_job_application_for_user(user_email: str, job: dict, status: str = "App
             user_email, external_job_id, source_name, title, company,
             location, apply_url, status, notes
         ))
-
     conn.commit()
     cursor.close()
     conn.close()
 
 
-def get_job_applications_by_user(user_email: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+def get_job_applications_by_user(user_email: str) -> list:
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, external_job_id, source_name, title, company, location,
+                   apply_url, status, notes, applied_at
+            FROM job_applications
+            WHERE user_email = ?
+            ORDER BY applied_at DESC
+        """, (user_email,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
 
+        applications = []
+        for row in rows:
+            row = dict_from_row(row)
+            applications.append({
+                "id": row["id"],
+                "external_job_id": row["external_job_id"],
+                "source_name": row["source_name"],
+                "title": row["title"],
+                "company": row["company"],
+                "location": row["location"],
+                "apply_url": row["apply_url"],
+                "status": row["status"],
+                "notes": row["notes"] or "",
+                "applied_at": row["applied_at"] or "",
+            })
+        return applications
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
     cursor.execute("""
         SELECT id, external_job_id, source_name, title, company, location,
                apply_url, status, notes, applied_at
@@ -577,7 +909,6 @@ def get_job_applications_by_user(user_email: str):
         WHERE user_email = ?
         ORDER BY applied_at DESC
     """, (user_email,))
-
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -600,22 +931,33 @@ def get_job_applications_by_user(user_email: str):
 
 
 def update_job_application_status_for_user(user_email: str, application_id: int, status: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE job_applications
+            SET status = ?
+            WHERE id = ? AND user_email = ?
+        """, (status, application_id, user_email))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return
 
+    conn = get_azure_connection()
+    cursor = conn.cursor()
     cursor.execute("""
         UPDATE job_applications
         SET status = ?
         WHERE id = ? AND user_email = ?
     """, (status, application_id, user_email))
-
     conn.commit()
     cursor.close()
     conn.close()
 
 
 # =========================================================
-# TEXT / NLP HELPERS
+# NLP HELPERS
 # =========================================================
 def normalize_tokens(text: str) -> list[str]:
     tokens = word_tokenize(text)
@@ -662,9 +1004,9 @@ def extract_qualifications(text: str) -> list[str]:
 
 
 # =========================================================
-# AZURE HELPER
+# FILE HELPERS
 # =========================================================
-def upload_cv_to_azure(file_path: str, blob_name: str) -> str | None:
+def upload_cv_to_azure(file_path: str, blob_name: str) -> Optional[str]:
     if cv_container_client is None:
         print("Azure CV container client not configured. Skipping upload.")
         return None
@@ -680,9 +1022,6 @@ def upload_cv_to_azure(file_path: str, blob_name: str) -> str | None:
     return blob_client.url
 
 
-# =========================================================
-# FILE TEXT EXTRACTION
-# =========================================================
 def extract_text_from_pdf(path: str) -> str:
     try:
         reader = PdfReader(path)
@@ -711,7 +1050,7 @@ def extract_text_generic(path: str) -> str:
 
 
 # =========================================================
-# CSV MATCHING (KEEP AS FALLBACK / EXTRA)
+# MATCHING / EXPLANATION
 # =========================================================
 def generate_job_explanation(matched_skills, missing_skills):
     if matched_skills and not missing_skills:
@@ -723,31 +1062,40 @@ def generate_job_explanation(matched_skills, missing_skills):
         )
     if missing_skills:
         return f"This role highlights useful growth areas like {', '.join(missing_skills[:4])}."
-    return "Limited matching detail available for this role."
+    return "This role was surfaced as a relevant live opportunity based on your profile."
 
 
 # =========================================================
 # ADZUNA HELPERS
 # =========================================================
 def build_search_query_from_skills(skills: list[str]) -> str:
-    if not skills:
+    lowered_skills = [str(skill).lower().strip() for skill in skills]
+
+    if any(
+        skill in lowered_skills
+        for skill in ["python", "sql", "data analysis", "data analytics", "power bi", "machine learning"]
+    ):
+        return "data analyst"
+
+    if any(
+        skill in lowered_skills
+        for skill in ["react", "javascript", "typescript", "html", "css", "ui", "ux", "figma"]
+    ):
+        return "frontend developer"
+
+    if any(
+        skill in lowered_skills
+        for skill in ["aws", "azure", "cloud", "docker", "kubernetes", "terraform", "devops"]
+    ):
+        return "cloud engineer"
+
+    if any(
+        skill in lowered_skills
+        for skill in ["django", "flask", "java", "node.js", "c#", "c++"]
+    ):
         return "software engineer"
 
-    lowered_skills = [str(skill).lower() for skill in skills]
-
-    priority_terms = [
-        "python", "java", "javascript", "typescript", "react",
-        "sql", "azure", "aws", "docker", "machine learning",
-        "data analysis", "power bi", "django", "flask",
-        "figma", "ui", "ux", "cloud"
-    ]
-
-    picked = [term for term in priority_terms if term in lowered_skills]
-
-    if not picked:
-        picked = lowered_skills[:4]
-
-    return " ".join(picked[:4])
+    return "software engineer"
 
 
 def normalize_adzuna_job(job: dict, user_skills: list[str], user_quals: list[str]) -> dict:
@@ -760,22 +1108,60 @@ def normalize_adzuna_job(job: dict, user_skills: list[str], user_quals: list[str
 
     combined_text = f"{title} {description} {category}".lower()
 
-    matched_skills = [skill for skill in user_skills if str(skill).lower() in combined_text]
-    missing_skills = [
-        skill for skill in SKILL_KEYWORDS
-        if skill.lower() in combined_text and skill.lower() not in [str(s).lower() for s in user_skills]
-    ]
-    missing_qualifications = [
-        qual for qual in QUALIFICATION_KEYWORDS
-        if qual.lower() in combined_text and qual.lower() not in [str(q).lower() for q in user_quals]
-    ]
+    normalized_user_skills = [str(skill).lower().strip() for skill in user_skills]
+    normalized_user_quals = [str(q).lower().strip() for q in user_quals]
+
+    matched_skills = []
+    for skill in normalized_user_skills:
+        if skill and skill in combined_text:
+            matched_skills.append(skill)
+
+    missing_skills = []
+    for skill in SKILL_KEYWORDS:
+        skill_lower = skill.lower()
+        if skill_lower in combined_text and skill_lower not in normalized_user_skills:
+            missing_skills.append(skill)
+
+    missing_qualifications = []
+    for qual in QUALIFICATION_KEYWORDS:
+        qual_lower = qual.lower()
+        if qual_lower in combined_text and qual_lower not in normalized_user_quals:
+            missing_qualifications.append(qual)
+
+    title_bonus = 0
+    title_lower = title.lower()
+
+    if "data" in title_lower and any(
+        x in normalized_user_skills for x in ["python", "sql", "data analysis", "data analytics", "power bi"]
+    ):
+        title_bonus += 2
+
+    if "frontend" in title_lower and any(
+        x in normalized_user_skills for x in ["react", "javascript", "typescript", "html", "css"]
+    ):
+        title_bonus += 2
+
+    if "cloud" in title_lower and any(
+        x in normalized_user_skills for x in ["aws", "azure", "cloud", "docker", "kubernetes"]
+    ):
+        title_bonus += 2
+
+    if "software" in title_lower or "engineer" in title_lower:
+        if any(x in normalized_user_skills for x in ["java", "python", "flask", "django", "node.js"]):
+            title_bonus += 2
 
     skill_score = len(matched_skills)
-    qual_score = sum(1 for q in user_quals if str(q).lower() in combined_text)
-    total_score = skill_score * 2 + qual_score
+    qual_score = sum(1 for q in normalized_user_quals if q and q in combined_text)
+    total_score = (skill_score * 2) + qual_score + title_bonus
 
     total_relevant = len(matched_skills) + len(missing_skills)
-    match_percentage = round((len(matched_skills) / total_relevant) * 100) if total_relevant > 0 else 0
+    match_percentage = (
+        round((len(matched_skills) / total_relevant) * 100)
+        if total_relevant > 0 else 15
+    )
+
+    if title_bonus > 0 and match_percentage < 35:
+        match_percentage = 35
 
     explanation = generate_job_explanation(matched_skills, missing_skills)
 
@@ -811,44 +1197,79 @@ def search_live_jobs_adzuna(
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         raise RuntimeError("Adzuna API credentials are missing.")
 
-    query_text = build_search_query_from_skills(skills)
+    primary_query = build_search_query_from_skills(skills)
 
-    url = f"https://api.adzuna.com/v1/api/jobs/{ADZUNA_COUNTRY}/search/{page}"
-    params = {
-        "app_id": ADZUNA_APP_ID,
-        "app_key": ADZUNA_APP_KEY,
-        "results_per_page": results_per_page,
-        "what": query_text,
-        "content-type": "application/json",
-    }
-
-    if where:
-        params["where"] = where
-
-    response = requests.get(url, params=params, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-
-    raw_jobs = payload.get("results", [])
-
-    normalized_jobs = [
-        normalize_adzuna_job(job, skills, qualifications)
-        for job in raw_jobs
+    fallback_queries = [
+        primary_query,
+        "software engineer",
+        "data analyst",
+        "frontend developer",
+        "cloud engineer",
+        "full stack developer",
     ]
 
-    normalized_jobs = [job for job in normalized_jobs if job["total_score"] > 0]
-    normalized_jobs.sort(
-        key=lambda j: (j["match_percentage"], j["total_score"]),
+    seen_ids = set()
+    combined_jobs = []
+    total_results_seen = 0
+
+    for query_text in fallback_queries:
+        url = f"https://api.adzuna.com/v1/api/jobs/{ADZUNA_COUNTRY}/search/{page}"
+        params = {
+            "app_id": ADZUNA_APP_ID,
+            "app_key": ADZUNA_APP_KEY,
+            "results_per_page": results_per_page,
+            "what": query_text,
+            "content-type": "application/json",
+        }
+
+        if where:
+            params["where"] = where
+
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+
+        raw_jobs = payload.get("results", [])
+        total_results_seen += len(raw_jobs)
+
+        print(f"[ADZUNA] query='{query_text}' returned {len(raw_jobs)} raw jobs")
+
+        normalized_jobs = [
+            normalize_adzuna_job(job, skills, qualifications)
+            for job in raw_jobs
+        ]
+
+        for job in normalized_jobs:
+            unique_id = job.get("external_job_id") or job.get("job_id")
+            if unique_id and unique_id not in seen_ids:
+                seen_ids.add(unique_id)
+                combined_jobs.append(job)
+
+        if len(combined_jobs) >= 20:
+            break
+
+    combined_jobs.sort(
+        key=lambda j: (
+            j.get("match_percentage", 0),
+            j.get("total_score", 0),
+            len(j.get("matched_skills", [])),
+        ),
         reverse=True,
     )
 
+    top_jobs = combined_jobs[:20]
+
+    print(f"[ADZUNA] returning {len(top_jobs)} jobs to frontend")
+
     return {
-        "jobs": normalized_jobs,
+        "jobs": top_jobs,
         "metadata": {
             "source": "Adzuna",
-            "query_used": query_text,
-            "total_results_returned": len(raw_jobs),
-            "jobs_with_matches": len(normalized_jobs),
+            "query_used": primary_query,
+            "total_results_returned": total_results_seen,
+            "jobs_with_matches": len(
+                [job for job in top_jobs if (job.get("total_score", 0) or 0) > 0]
+            ),
             "page": page,
             "results_per_page": results_per_page,
         },
@@ -981,14 +1402,14 @@ def build_profile_analytics(saved_jobs: list, uploaded_cvs: list, applications: 
 # =========================================================
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok"}), 200
+    return jsonify({"status": "ok", "db_mode": DB_MODE}), 200
 
 
 @app.route("/api/test-adzuna", methods=["GET"])
 def test_adzuna():
     app_id = os.getenv("ADZUNA_APP_ID")
     app_key = os.getenv("ADZUNA_APP_KEY")
-    country = os.getenv("ADZUNA_COUNTRY", "ie")
+    country = os.getenv("ADZUNA_COUNTRY", "us")
 
     url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
     params = {
@@ -996,7 +1417,6 @@ def test_adzuna():
         "app_key": app_key,
         "results_per_page": 5,
         "what": "software engineer",
-        "where": "dublin",
         "content-type": "application/json",
     }
 
@@ -1004,6 +1424,30 @@ def test_adzuna():
         response = requests.get(url, params=params, timeout=20)
         response.raise_for_status()
         return jsonify(response.json()), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/test-adzuna-raw", methods=["GET"])
+def test_adzuna_raw():
+    try:
+        url = f"https://api.adzuna.com/v1/api/jobs/{ADZUNA_COUNTRY}/search/1"
+        params = {
+            "app_id": ADZUNA_APP_ID,
+            "app_key": ADZUNA_APP_KEY,
+            "results_per_page": 10,
+            "what": "software engineer",
+            "content-type": "application/json",
+        }
+
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        payload = response.json()
+
+        return jsonify({
+            "count": len(payload.get("results", [])),
+            "sample_titles": [job.get("title") for job in payload.get("results", [])[:5]],
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1144,7 +1588,7 @@ def upload_and_parse_cv():
         print("Could not delete temp file:", e)
 
     return jsonify({
-        "message": "CV uploaded & parsed successfully (NLTK)",
+        "message": "CV uploaded & parsed successfully",
         "original_name": file.filename,
         "skills": skills,
         "qualifications": qualifications,
@@ -1251,20 +1695,6 @@ def match_jobs():
         axis=1
     )
 
-    df = df[df["total_score"] > 0]
-    jobs_with_matches = len(df)
-
-    if jobs_with_matches == 0:
-        return jsonify({
-            "jobs": [],
-            "metadata": {
-                "message": "No jobs matched the provided skills/qualifications.",
-                "total_jobs_loaded": int(len(job_df)),
-                "jobs_with_matches": 0,
-                "top_n": int(top_n),
-            },
-        }), 200
-
     df = df.sort_values(by="total_score", ascending=False).head(top_n)
     df = df.drop(columns=["__full_text"])
     df = df.fillna("")
@@ -1276,9 +1706,8 @@ def match_jobs():
         "metadata": {
             "source": "csv",
             "total_jobs_loaded": int(len(job_df)),
-            "jobs_with_matches": int(jobs_with_matches),
+            "jobs_with_matches": len([job for job in jobs if int(job.get("total_score", 0) or 0) > 0]),
             "top_n": int(top_n),
-            "match_coverage_ratio": jobs_with_matches / float(len(job_df)),
         },
     }), 200
 
@@ -1412,12 +1841,7 @@ def update_application_status():
     application_id = data.get("application_id")
     status = str(data.get("status", "")).strip()
 
-    allowed_statuses = {
-        "Applied",
-        "Interviewing",
-        "Rejected",
-        "Offer",
-    }
+    allowed_statuses = {"Applied", "Interviewing", "Rejected", "Offer"}
 
     if not application_id:
         return jsonify({"error": "application_id is required"}), 400
@@ -1465,6 +1889,7 @@ def profile_data():
         "all_extracted_skills": profile_bits["all_extracted_skills"],
         "all_extracted_qualifications": profile_bits["all_extracted_qualifications"],
         "analytics": profile_bits["analytics"],
+        "db_mode": DB_MODE,
     }), 200
 
 
@@ -1480,5 +1905,7 @@ if __name__ == "__main__":
     print("ADZUNA APP ID FOUND =", bool(ADZUNA_APP_ID))
     print("ADZUNA APP KEY FOUND =", bool(ADZUNA_APP_KEY))
 
+    probe_db_mode()
     init_db()
+
     app.run(host="0.0.0.0", port=5000, debug=True)
