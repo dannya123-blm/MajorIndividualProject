@@ -28,6 +28,7 @@ export default function HomePage() {
   const [jobs, setJobs] = useState([]);
   const [jobStats, setJobStats] = useState(null);
   const [savedJobs, setSavedJobs] = useState([]);
+  const [applications, setApplications] = useState([]);
   const [sortBy, setSortBy] = useState("match_percentage");
   const [industryFilter, setIndustryFilter] = useState("All");
   const [locationFilter, setLocationFilter] = useState("All");
@@ -76,6 +77,23 @@ export default function HomePage() {
     }
   };
 
+  const fetchApplications = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/applications`, {
+        headers: {
+          ...getAuthHeaders(),
+        },
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      setApplications(data.applications || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     const init = async () => {
       const token = localStorage.getItem("access_token");
@@ -84,8 +102,12 @@ export default function HomePage() {
         return;
       }
 
-      await fetchCurrentUser();
-      await fetchSavedJobs();
+      await Promise.all([
+        fetchCurrentUser(),
+        fetchSavedJobs(),
+        fetchApplications(),
+      ]);
+
       setLoadingPage(false);
     };
 
@@ -154,9 +176,9 @@ export default function HomePage() {
       setQualifications(data.qualifications || []);
       setPreview(data.text_preview || "");
       setAzureBlobUrl(data.azure_blob_url || "");
-      setStatus("CV parsed. Finding matching jobs...");
+      setStatus("CV parsed. Searching live jobs...");
 
-      const matchRes = await fetch(`${API_BASE_URL}/api/match-jobs`, {
+      const liveRes = await fetch(`${API_BASE_URL}/api/live-jobs`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -165,58 +187,40 @@ export default function HomePage() {
         body: JSON.stringify({
           skills: data.skills || [],
           qualifications: data.qualifications || [],
-          top_n: 10,
+          where: "Dublin",
+          page: 1,
+          results_per_page: 20,
         }),
       });
 
-      const matchData = await matchRes.json();
+      const liveData = await liveRes.json();
 
-      if (!matchRes.ok) {
-        setStatus("CV parsed, but job matching failed.");
+      if (!liveRes.ok) {
+        console.error("Live jobs error:", liveData);
+        setStatus(liveData.error || "CV parsed, but live jobs could not be loaded.");
         return;
       }
 
-      const returnedJobs = (matchData.jobs || []).map((job, index) => {
-        const matchedCount = Array.isArray(job.matched_skills)
-          ? job.matched_skills.length
-          : 0;
-        const missingCount = Array.isArray(job.missing_skills)
-          ? job.missing_skills.length
-          : 0;
-        const totalRelevantSkills = matchedCount + missingCount;
-
-        const matchPercentage =
-          totalRelevantSkills > 0
-            ? Math.round((matchedCount / totalRelevantSkills) * 100)
-            : 0;
-
-        return {
-          ...job,
-          job_id:
-            job.job_id ||
-            job.id ||
-            job.title ||
-            job.job_title ||
-            `job-${index + 1}`,
-          match_percentage: matchPercentage,
-        };
-      });
+      const returnedJobs = (liveData.jobs || []).map((job, index) => ({
+        ...job,
+        job_id:
+          job.job_id ||
+          job.external_job_id ||
+          job.id ||
+          job.title ||
+          `job-${index + 1}`,
+      }));
 
       setJobs(returnedJobs);
-      setJobStats(matchData.metadata || null);
+      setJobStats(liveData.metadata || null);
       setShowProfilePrompt(true);
 
-      if (matchData.metadata) {
-        const { total_jobs_loaded, jobs_with_matches, top_n } =
-          matchData.metadata;
-
+      if (liveData.metadata) {
         setStatus(
-          `CV parsed successfully. From ${total_jobs_loaded} jobs, ${jobs_with_matches} had at least one match. Showing top ${top_n}.`
+          `CV parsed successfully. Loaded ${returnedJobs.length} live jobs from ${liveData.metadata.source || "Adzuna"}.`
         );
       } else {
-        setStatus(
-          `CV parsed successfully. Found ${returnedJobs.length} matching jobs.`
-        );
+        setStatus(`CV parsed successfully. Loaded ${returnedJobs.length} live jobs.`);
       }
     } catch (err) {
       console.error(err);
@@ -242,14 +246,54 @@ export default function HomePage() {
     }
   };
 
+  const applyToJob = async (job) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/apply-job`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ job }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Could not apply to this job.");
+        return;
+      }
+
+      setApplications(data.applications || []);
+      window.open(data.apply_url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      console.error(err);
+      alert("Could not connect to backend.");
+    }
+  };
+
   const isJobSaved = (jobId) => {
     return savedJobs.some((job) => job.job_id === jobId);
+  };
+
+  const hasAppliedToJob = (externalJobId, title) => {
+    return applications.some(
+      (app) =>
+        app.external_job_id === String(externalJobId) ||
+        (app.title && title && app.title.toLowerCase() === title.toLowerCase())
+    );
   };
 
   const getMatchLabel = (score) => {
     if (score >= 80) return "Strong Match";
     if (score >= 50) return "Good Match";
     return "Needs Improvement";
+  };
+
+  const getReadinessLabel = (score) => {
+    if (score >= 80) return "Ready to apply";
+    if (score >= 50) return "Almost ready";
+    return "Needs improvement";
   };
 
   const industries = useMemo(() => {
@@ -337,6 +381,8 @@ export default function HomePage() {
   }, [filteredJobs]);
 
   const generateExplanation = (job) => {
+    if (job.explanation) return job.explanation;
+
     const matched = Array.isArray(job.matched_skills) ? job.matched_skills : [];
     const missing = Array.isArray(job.missing_skills) ? job.missing_skills : [];
 
@@ -408,7 +454,7 @@ export default function HomePage() {
               className="topnav-item"
               onClick={() => router.push("/profile")}
             >
-              Saved Jobs
+              Applications
             </button>
 
             <div
@@ -437,11 +483,11 @@ export default function HomePage() {
 
         <section className="hero-row">
           <div>
-            <p className="eyebrow">AI-powered job discovery</p>
+            <p className="eyebrow">AI-powered live job discovery</p>
             <h1 className="page-title">Stop searching for jobs. Let jobs find you.</h1>
             <p className="page-subtitle">
-              Upload your CV, get personalised job matches, understand why they
-              fit, and improve your chances with smart skill guidance.
+              Upload your CV, get personalised live job matches, understand why
+              they fit, apply to real jobs, and track your application journey.
             </p>
           </div>
         </section>
@@ -458,9 +504,9 @@ export default function HomePage() {
             <h4>How to use Just Apply</h4>
             <ul className="guide-list">
               <li>Upload your CV</li>
-              <li>Review your recommended jobs</li>
-              <li>Check your missing skills</li>
-              <li>Open Profile for saved jobs and analytics</li>
+              <li>Review live job matches</li>
+              <li>Save or apply to jobs</li>
+              <li>Track applications in your profile</li>
             </ul>
             <button
               className="btn-primary"
@@ -482,7 +528,7 @@ export default function HomePage() {
             <p className="guide-kicker">New insight available</p>
             <h4>Your full profile is ready</h4>
             <p className="insight-text">
-              View your saved jobs, uploaded CV history, extracted skills, and
+              View your saved jobs, uploaded CV history, applications, and
               personal analytics on your profile page.
             </p>
             <div className="prompt-actions">
@@ -504,9 +550,9 @@ export default function HomePage() {
 
         <section className="stats-row">
           <div className="stat-card">
-            <div className="stat-icon">💼</div>
+            <div className="stat-icon">📨</div>
             <div className="stat-label">Jobs Applied</div>
-            <div className="stat-value">0</div>
+            <div className="stat-value">{applications.length}</div>
           </div>
 
           <div className="stat-card">
@@ -560,7 +606,7 @@ export default function HomePage() {
               </div>
 
               <button className="btn-primary" onClick={handleUpload}>
-                Upload &amp; Find Matching Jobs
+                Upload &amp; Find Live Jobs
               </button>
             </div>
 
@@ -653,14 +699,14 @@ export default function HomePage() {
             <div className="jobs-card">
               <div className="jobs-header">
                 <div>
-                  <p className="section-kicker">Recommendations</p>
+                  <p className="section-kicker">Live recommendations</p>
                   <h4>Recommended Jobs ({filteredJobs.length})</h4>
                 </div>
 
                 {jobStats && (
                   <div className="summary-pill">
-                    {jobStats.total_jobs_loaded} loaded •{" "}
-                    {jobStats.jobs_with_matches} matched • top {jobStats.top_n}
+                    {jobStats.source || "Adzuna"} •{" "}
+                    {jobStats.jobs_with_matches || filteredJobs.length} matched
                   </div>
                 )}
               </div>
@@ -708,121 +754,147 @@ export default function HomePage() {
               </div>
 
               <div className="jobs-list">
-                {filteredJobs.map((job, idx) => (
-                  <div className="job-item" key={idx}>
-                    <div className="job-top">
-                      <div>
-                        <div className="job-title">
-                          {job.title || job.job_title || "Untitled role"}
+                {filteredJobs.map((job, idx) => {
+                  const alreadyApplied = hasAppliedToJob(
+                    job.external_job_id,
+                    job.title || job.job_title
+                  );
+
+                  return (
+                    <div className="job-item" key={idx}>
+                      <div className="job-top">
+                        <div>
+                          <div className="job-title">
+                            {job.title || job.job_title || "Untitled role"}
+                          </div>
+
+                          <div className="job-meta">
+                            {job.company && <span>{job.company}</span>}
+                            {job.location && <span> • {job.location}</span>}
+                            {job.industry && <span> • {job.industry}</span>}
+                          </div>
                         </div>
 
-                        <div className="job-meta">
-                          {job.company && <span>{job.company}</span>}
-                          {job.location && <span> • {job.location}</span>}
-                          {job.industry && <span> • {job.industry}</span>}
+                        <div className="match-badge">
+                          {getMatchLabel(job.match_percentage || 0)} •{" "}
+                          {job.match_percentage || 0}%
                         </div>
                       </div>
 
-                      <div className="match-badge">
-                        {getMatchLabel(job.match_percentage || 0)} •{" "}
-                        {job.match_percentage || 0}%
+                      <div className="job-score-row">
+                        {typeof job.total_score !== "undefined" && (
+                          <div className="job-score">Score {job.total_score}</div>
+                        )}
+
+                        {typeof job.skill_score !== "undefined" && (
+                          <div className="job-score muted">
+                            Skills {job.skill_score}
+                          </div>
+                        )}
+
+                        {typeof job.qual_score !== "undefined" && (
+                          <div className="job-score muted">
+                            Qualifications {job.qual_score}
+                          </div>
+                        )}
+
+                        <div className="job-score muted">
+                          {getReadinessLabel(job.match_percentage || 0)}
+                        </div>
+
+                        <button
+                          className="btn-primary"
+                          onClick={() => saveJob(job)}
+                          disabled={isJobSaved(job.job_id)}
+                        >
+                          {isJobSaved(job.job_id) ? "Saved" : "Save Job"}
+                        </button>
+
+                        <button
+                          className="btn-primary btn-apply"
+                          onClick={() => applyToJob(job)}
+                          disabled={alreadyApplied}
+                        >
+                          {alreadyApplied ? "Applied" : "Apply Now"}
+                        </button>
                       </div>
-                    </div>
 
-                    <div className="job-score-row">
-                      {typeof job.total_score !== "undefined" && (
-                        <div className="job-score">Score {job.total_score}</div>
-                      )}
+                      <div className="progress-track">
+                        <div
+                          className="progress-bar"
+                          style={{ width: `${job.match_percentage || 0}%` }}
+                        />
+                      </div>
 
-                      {typeof job.skill_score !== "undefined" && (
-                        <div className="job-score muted">
-                          Skills {job.skill_score}
-                        </div>
-                      )}
+                      <div className="job-tags-block">
+                        <div className="job-tags-title">Why this job matches</div>
+                        <p className="insight-text">{generateExplanation(job)}</p>
+                      </div>
 
-                      {typeof job.qual_score !== "undefined" && (
-                        <div className="job-score muted">
-                          Qualifications {job.qual_score}
-                        </div>
-                      )}
-
-                      <button
-                        className="btn-primary"
-                        onClick={() => saveJob(job)}
-                        disabled={isJobSaved(job.job_id)}
-                      >
-                        {isJobSaved(job.job_id) ? "Saved" : "Save Job"}
-                      </button>
-                    </div>
-
-                    <div className="progress-track">
-                      <div
-                        className="progress-bar"
-                        style={{ width: `${job.match_percentage || 0}%` }}
-                      />
-                    </div>
-
-                    <div className="job-tags-block">
-                      <div className="job-tags-title">Why this job matches</div>
-                      <p className="insight-text">{generateExplanation(job)}</p>
-                    </div>
-
-                    {Array.isArray(job.matched_skills) &&
-                      job.matched_skills.length > 0 && (
+                      {job.description && (
                         <div className="job-tags-block">
-                          <div className="job-tags-title">Matched skills</div>
-                          <div className="chips">
-                            {job.matched_skills.map((skill, skillIdx) => (
-                              <span
-                                key={`matched-${idx}-${skillIdx}`}
-                                className="chip chip-orange"
-                              >
-                                {skill}
-                              </span>
-                            ))}
-                          </div>
+                          <div className="job-tags-title">Live job summary</div>
+                          <p className="insight-text">{job.description}</p>
                         </div>
                       )}
 
-                    {Array.isArray(job.missing_skills) &&
-                      job.missing_skills.length > 0 && (
-                        <div className="job-tags-block">
-                          <div className="job-tags-title">
-                            Skills to improve
+                      {Array.isArray(job.matched_skills) &&
+                        job.matched_skills.length > 0 && (
+                          <div className="job-tags-block">
+                            <div className="job-tags-title">Matched skills</div>
+                            <div className="chips">
+                              {job.matched_skills.map((skill, skillIdx) => (
+                                <span
+                                  key={`matched-${idx}-${skillIdx}`}
+                                  className="chip chip-orange"
+                                >
+                                  {skill}
+                                </span>
+                              ))}
+                            </div>
                           </div>
-                          <div className="chips">
-                            {job.missing_skills.map((skill, skillIdx) => (
-                              <span
-                                key={`missing-skill-${idx}-${skillIdx}`}
-                                className="chip chip-blue"
-                              >
-                                {skill}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                        )}
 
-                    {Array.isArray(job.missing_qualifications) &&
-                      job.missing_qualifications.length > 0 && (
-                        <div className="job-tags-block">
-                          <div className="job-tags-title">
-                            Missing qualifications
+                      {Array.isArray(job.missing_skills) &&
+                        job.missing_skills.length > 0 && (
+                          <div className="job-tags-block">
+                            <div className="job-tags-title">
+                              Skills to improve
+                            </div>
+                            <div className="chips">
+                              {job.missing_skills.map((skill, skillIdx) => (
+                                <span
+                                  key={`missing-skill-${idx}-${skillIdx}`}
+                                  className="chip chip-blue"
+                                >
+                                  {skill}
+                                </span>
+                              ))}
+                            </div>
                           </div>
-                          <div className="chips">
-                            {job.missing_qualifications.map((qual, qualIdx) => (
-                              <span
-                                key={`missing-qual-${idx}-${qualIdx}`}
-                                className="chip chip-neutral"
-                              >
-                                {qual}
-                              </span>
-                            ))}
+                        )}
+
+                      {Array.isArray(job.missing_qualifications) &&
+                        job.missing_qualifications.length > 0 && (
+                          <div className="job-tags-block">
+                            <div className="job-tags-title">
+                              Missing qualifications
+                            </div>
+                            <div className="chips">
+                              {job.missing_qualifications.map((qual, qualIdx) => (
+                                <span
+                                  key={`missing-qual-${idx}-${qualIdx}`}
+                                  className="chip chip-neutral"
+                                >
+                                  {qual}
+                                </span>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      )}
-                  </div>
-                ))}
+                        )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </section>

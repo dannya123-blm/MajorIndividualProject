@@ -17,6 +17,27 @@
   --blue-text: #1d67d9;
   --neutral-soft: #f4eee8;
 }
+.btn-apply {
+  background: linear-gradient(135deg, #ff6200 0%, #ff8a3a 100%);
+}
+
+.btn-apply:hover {
+  background: linear-gradient(135deg, #e45700 0%, #ff7a21 100%);
+}
+
+.application-badge {
+  background: #2b7fff;
+}
+
+.application-status-select {
+  min-height: 42px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--text-main);
+  padding: 0 12px;
+  outline: none;
+}
 .profile-nav-wrapper {
   position: relative;
   display: flex;

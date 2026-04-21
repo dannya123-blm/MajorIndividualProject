@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import justwork from "../../images/justwork.png";
@@ -20,6 +20,7 @@ export default function ProfilePage() {
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [updatingAppId, setUpdatingAppId] = useState(null);
 
   const fetchProfileData = async () => {
     try {
@@ -66,10 +67,55 @@ export default function ProfilePage() {
     }
   };
 
+  const updateApplicationStatus = async (applicationId, status) => {
+    try {
+      setUpdatingAppId(applicationId);
+
+      const res = await fetch(`${API_BASE_URL}/api/update-application-status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          application_id: applicationId,
+          status,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Could not update application status.");
+        return;
+      }
+
+      setProfileData((prev) => ({
+        ...prev,
+        applications: data.applications || [],
+      }));
+
+      fetchProfileData();
+    } catch (err) {
+      console.error(err);
+      alert("Could not connect to backend.");
+    } finally {
+      setUpdatingAppId(null);
+    }
+  };
+
+  if (loading) {
+    return <div style={{ padding: "40px" }}>Loading profile...</div>;
+  }
+
+  if (!profileData) {
+    return null;
+  }
+
   const savedJobs = profileData?.saved_jobs || [];
   const uploadedCvs = profileData?.uploaded_cvs || [];
   const extractedSkills = profileData?.all_extracted_skills || [];
   const extractedQualifications = profileData?.all_extracted_qualifications || [];
+  const applications = profileData?.applications || [];
   const analytics = profileData?.analytics || {};
 
   const strongMatches = analytics.strong_matches || 0;
@@ -88,17 +134,9 @@ export default function ProfilePage() {
 
   const bestRole = analytics.best_fit_role || "No role yet";
   const bestIndustry = analytics.best_fit_industry || "No industry yet";
-
   const topMissingSkills = analytics.top_missing_skills || [];
   const roleBreakdown = analytics.role_breakdown || [];
-
-  if (loading) {
-    return <div style={{ padding: "40px" }}>Loading profile...</div>;
-  }
-
-  if (!profileData) {
-    return null;
-  }
+  const applicationStatusBreakdown = analytics.application_status_breakdown || [];
 
   return (
     <div className="dashboard-root">
@@ -165,8 +203,9 @@ export default function ProfilePage() {
             <p className="eyebrow">Your personal hub</p>
             <h1 className="page-title">Profile & Career Insights</h1>
             <p className="page-subtitle">
-              View your saved jobs, uploaded CV history, extracted skills, and
-              analytics that help explain where you fit best in the job market.
+              View your saved jobs, uploaded CV history, extracted skills,
+              applications, and analytics that explain where you fit best in the
+              live job market.
             </p>
           </div>
         </section>
@@ -175,6 +214,7 @@ export default function ProfilePage() {
           <div className="profile-user-card">
             <div className="profile-user-icon">💼</div>
             <h2>Hello, {profileData.user?.name}!</h2>
+
             <div className="profile-user-box">
               <p className="profile-user-label">Email</p>
               <div className="profile-user-value">
@@ -190,6 +230,11 @@ export default function ProfilePage() {
             <div className="profile-user-box">
               <p className="profile-user-label">Best-fit industry</p>
               <div className="profile-user-value">{bestIndustry}</div>
+            </div>
+
+            <div className="profile-user-box">
+              <p className="profile-user-label">Applications</p>
+              <div className="profile-user-value">{applications.length}</div>
             </div>
           </div>
 
@@ -283,6 +328,34 @@ export default function ProfilePage() {
             <div className="jobs-card">
               <div className="jobs-header">
                 <div>
+                  <p className="section-kicker">Applications</p>
+                  <h4>Application Journey</h4>
+                </div>
+              </div>
+
+              <div className="mini-bars">
+                {applicationStatusBreakdown.length === 0 && (
+                  <p className="insight-text">No application status data yet.</p>
+                )}
+
+                {applicationStatusBreakdown.map((item, idx) => (
+                  <div key={idx} className="mini-bar-row">
+                    <div className="mini-bar-label">{item.name}</div>
+                    <div className="mini-bar-track">
+                      <div
+                        className="mini-bar-fill alt"
+                        style={{ width: `${Math.min(item.count * 20, 100)}%` }}
+                      />
+                    </div>
+                    <div className="mini-bar-value">{item.count}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="jobs-card">
+              <div className="jobs-header">
+                <div>
                   <p className="section-kicker">Uploaded history</p>
                   <h4>All CVs</h4>
                 </div>
@@ -355,6 +428,74 @@ export default function ProfilePage() {
                     </span>
                   ))}
                 </div>
+              </div>
+            </div>
+
+            <div className="jobs-card">
+              <div className="jobs-header">
+                <div>
+                  <p className="section-kicker">Applications</p>
+                  <h4>Applied Jobs</h4>
+                </div>
+              </div>
+
+              <div className="jobs-list">
+                {applications.length === 0 && (
+                  <p className="insight-text">No applications yet.</p>
+                )}
+
+                {applications.map((application, idx) => (
+                  <div className="job-item" key={idx}>
+                    <div className="job-top">
+                      <div>
+                        <div className="job-title">
+                          {application.title || "Untitled role"}
+                        </div>
+
+                        <div className="job-meta">
+                          {application.company && <span>{application.company}</span>}
+                          {application.location && <span> • {application.location}</span>}
+                          {application.source_name && <span> • {application.source_name}</span>}
+                        </div>
+                      </div>
+
+                      <div className="match-badge application-badge">
+                        {application.status}
+                      </div>
+                    </div>
+
+                    <div className="job-score-row">
+                      <div className="job-score muted">
+                        Applied: {application.applied_at || "Recently"}
+                      </div>
+
+                      <select
+                        className="application-status-select"
+                        value={application.status}
+                        disabled={updatingAppId === application.id}
+                        onChange={(e) =>
+                          updateApplicationStatus(application.id, e.target.value)
+                        }
+                      >
+                        <option value="Applied">Applied</option>
+                        <option value="Interviewing">Interviewing</option>
+                        <option value="Rejected">Rejected</option>
+                        <option value="Offer">Offer</option>
+                      </select>
+
+                      {application.apply_url && (
+                        <a
+                          href={application.apply_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-primary cv-btn"
+                        >
+                          Open Job
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
