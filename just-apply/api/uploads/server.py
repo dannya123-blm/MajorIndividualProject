@@ -206,16 +206,20 @@ def get_sql_driver():
 
 def get_azure_connection():
     driver = get_sql_driver()
+
+    server = f"tcp:{AZURE_SQL_SERVER},1433"
+
     conn_str = (
         f"DRIVER={{{driver}}};"
-        f"SERVER={AZURE_SQL_SERVER};"
+        f"SERVER={server};"
         f"DATABASE={AZURE_SQL_DATABASE};"
         f"UID={AZURE_SQL_USERNAME};"
         f"PWD={AZURE_SQL_PASSWORD};"
         "Encrypt=yes;"
         "TrustServerCertificate=no;"
-        "Connection Timeout=30;"
+        "Connection Timeout=60;"
     )
+
     return pyodbc.connect(conn_str)
 
 
