@@ -194,6 +194,96 @@
 .btn-apply {
   background: linear-gradient(135deg, #ff6200 0%, #ff8a3a 100%);
 }
+.readiness-score-circle {
+  width: 84px;
+  height: 84px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ff6200 0%, #ff8a3a 100%);
+  color: white;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  margin-bottom: 14px;
+}
+
+.readiness-score-circle.small {
+  width: 70px;
+  height: 70px;
+  font-size: 1.15rem;
+}
+
+.career-target-select {
+  min-height: 44px;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #f1d7c1;
+  padding: 0 12px;
+  background: white;
+  margin-bottom: 12px;
+}
+
+.compare-panel {
+  margin-bottom: 24px;
+  padding: 18px;
+  border: 1px solid #f1ded0;
+  border-radius: 18px;
+  background: #fffaf6;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.compare-card {
+  border: 1px solid #f1ded0;
+  border-radius: 16px;
+  padding: 16px;
+  background: white;
+}
+
+.compare-stat {
+  margin: 8px 0;
+  font-weight: 700;
+  color: #3c2f28;
+}
+
+.selected-compare {
+  background: #ffe9d8;
+}
+
+.application-notes-block {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.notes-label {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #3b2e27;
+}
+
+.application-notes-textarea {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  border: 1px solid #f1d7c1;
+  border-radius: 12px;
+  padding: 12px;
+  font: inherit;
+  background: #fff;
+}
+
+@media (max-width: 1100px) {
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
+}
 
 .btn-apply:hover {
   background: linear-gradient(135deg, #e45700 0%, #ff7a21 100%);

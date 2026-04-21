@@ -21,13 +21,13 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [updatingAppId, setUpdatingAppId] = useState(null);
+  const [savingNotesId, setSavingNotesId] = useState(null);
+  const [notesMap, setNotesMap] = useState({});
 
   const fetchProfileData = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/profile-data`, {
-        headers: {
-          ...getAuthHeaders(),
-        },
+        headers: { ...getAuthHeaders() },
       });
 
       if (!res.ok) {
@@ -38,6 +38,12 @@ export default function ProfilePage() {
 
       const data = await res.json();
       setProfileData(data);
+
+      const initialNotes = {};
+      (data.applications || []).forEach((app) => {
+        initialNotes[app.id] = app.notes || "";
+      });
+      setNotesMap(initialNotes);
     } catch (err) {
       console.error(err);
     } finally {
@@ -56,9 +62,7 @@ export default function ProfilePage() {
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE_URL}/api/logout`, {
-        method: "POST",
-      });
+      await fetch(`${API_BASE_URL}/api/logout`, { method: "POST" });
     } catch (err) {
       console.error(err);
     } finally {
@@ -98,13 +102,39 @@ export default function ProfilePage() {
     }
   };
 
-  if (loading) {
-    return <div style={{ padding: "40px" }}>Loading profile...</div>;
-  }
+  const saveApplicationNotes = async (applicationId) => {
+    try {
+      setSavingNotesId(applicationId);
 
-  if (!profileData) {
-    return null;
-  }
+      const res = await fetch(`${API_BASE_URL}/api/update-application-notes`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          application_id: applicationId,
+          notes: notesMap[applicationId] || "",
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Could not update notes.");
+        return;
+      }
+
+      fetchProfileData();
+    } catch (err) {
+      console.error(err);
+      alert("Could not connect to backend.");
+    } finally {
+      setSavingNotesId(null);
+    }
+  };
+
+  if (loading) return <div style={{ padding: "40px" }}>Loading profile...</div>;
+  if (!profileData) return null;
 
   const savedJobs = profileData?.saved_jobs || [];
   const uploadedCvs = profileData?.uploaded_cvs || [];
@@ -113,12 +143,14 @@ export default function ProfilePage() {
   const applications = profileData?.applications || [];
   const analytics = profileData?.analytics || {};
   const dbMode = profileData?.db_mode || "unknown";
+  const cvTips = profileData?.cv_tips || [];
+  const jobReadiness = profileData?.job_readiness || null;
+  const careerTarget = profileData?.career_target || "";
 
   const strongMatches = analytics.strong_matches || 0;
   const goodMatches = analytics.good_matches || 0;
   const weakMatches = analytics.weak_matches || 0;
-  const totalMatchSegments =
-    Math.max(strongMatches + goodMatches + weakMatches, 1);
+  const totalMatchSegments = Math.max(strongMatches + goodMatches + weakMatches, 1);
 
   const donutStyle = {
     background: `conic-gradient(
@@ -138,39 +170,25 @@ export default function ProfilePage() {
     <div className="dashboard-root">
       <aside className="sidebar">
         <div className="sidebar-top">
-          <button className="icon-btn" title="Notifications">
-            🔔
-          </button>
+          <button className="icon-btn" title="Notifications">🔔</button>
         </div>
 
         <nav className="sidebar-nav">
-          <button className="nav-link" onClick={() => router.push("/")}>
-            Dashboard
-          </button>
+          <button className="nav-link" onClick={() => router.push("/")}>Dashboard</button>
           <button className="nav-link active">Profile</button>
-          <button className="nav-link" onClick={handleLogout}>
-            Sign Out
-          </button>
+          <button className="nav-link" onClick={handleLogout}>Sign Out</button>
         </nav>
       </aside>
 
       <main className="main">
         <header className="topbar">
           <div className="brand">
-            <Image
-              src={justwork}
-              alt="Just Apply logo"
-              width={22}
-              height={22}
-              className="brand-logo"
-            />
+            <Image src={justwork} alt="Just Apply logo" width={22} height={22} className="brand-logo" />
             <div className="brand-name">Just Apply</div>
           </div>
 
           <nav className="topnav">
-            <button className="topnav-item" onClick={() => router.push("/")}>
-              Dashboard
-            </button>
+            <button className="topnav-item" onClick={() => router.push("/")}>Dashboard</button>
             <button className="topnav-item active">Profile</button>
 
             <div
@@ -206,8 +224,7 @@ export default function ProfilePage() {
             <h1 className="page-title">Profile & Career Insights</h1>
             <p className="page-subtitle">
               View your saved jobs, uploaded CV history, extracted skills,
-              applications, and analytics that explain where you fit best in the
-              live job market.
+              applications, and analytics that explain where you fit best in the live job market.
             </p>
           </div>
         </section>
@@ -219,9 +236,7 @@ export default function ProfilePage() {
 
             <div className="profile-user-box">
               <p className="profile-user-label">Email</p>
-              <div className="profile-user-value">
-                {profileData.user?.email || "No email"}
-              </div>
+              <div className="profile-user-value">{profileData.user?.email || "No email"}</div>
             </div>
 
             <div className="profile-user-box">
@@ -230,13 +245,13 @@ export default function ProfilePage() {
             </div>
 
             <div className="profile-user-box">
-              <p className="profile-user-label">Best-fit industry</p>
-              <div className="profile-user-value">{bestIndustry}</div>
+              <p className="profile-user-label">Career target</p>
+              <div className="profile-user-value">{careerTarget || "Not selected"}</div>
             </div>
 
             <div className="profile-user-box">
-              <p className="profile-user-label">Applications</p>
-              <div className="profile-user-value">{applications.length}</div>
+              <p className="profile-user-label">Best-fit industry</p>
+              <div className="profile-user-value">{bestIndustry}</div>
             </div>
           </div>
 
@@ -267,37 +282,27 @@ export default function ProfilePage() {
 
                 <div className="stat-card highlight">
                   <div className="stat-label">Average match rate</div>
-                  <div className="stat-value">
-                    {analytics.average_match_rate || 0}%
-                  </div>
+                  <div className="stat-value">{analytics.average_match_rate || 0}%</div>
                 </div>
 
                 <div className="stat-card">
                   <div className="stat-label">Applications</div>
-                  <div className="stat-value">
-                    {analytics.applications_count || 0}
-                  </div>
+                  <div className="stat-value">{analytics.applications_count || 0}</div>
                 </div>
 
                 <div className="stat-card">
                   <div className="stat-label">Interviewing</div>
-                  <div className="stat-value">
-                    {analytics.interviewing_count || 0}
-                  </div>
+                  <div className="stat-value">{analytics.interviewing_count || 0}</div>
                 </div>
 
                 <div className="stat-card">
                   <div className="stat-label">Offers</div>
-                  <div className="stat-value">
-                    {analytics.offer_count || 0}
-                  </div>
+                  <div className="stat-value">{analytics.offer_count || 0}</div>
                 </div>
 
                 <div className="stat-card">
                   <div className="stat-label">Rejected</div>
-                  <div className="stat-value">
-                    {analytics.rejected_count || 0}
-                  </div>
+                  <div className="stat-value">{analytics.rejected_count || 0}</div>
                 </div>
               </div>
             </div>
@@ -329,30 +334,38 @@ export default function ProfilePage() {
               <div className="jobs-card">
                 <div className="jobs-header">
                   <div>
-                    <p className="section-kicker">Analytics</p>
-                    <h4>Top Missing Skills</h4>
+                    <p className="section-kicker">Job readiness</p>
+                    <h4>Readiness Score</h4>
                   </div>
                 </div>
 
-                <div className="mini-bars">
-                  {topMissingSkills.length === 0 && (
-                    <p className="insight-text">No missing-skill data yet.</p>
-                  )}
+                {jobReadiness ? (
+                  <>
+                    <div className="readiness-score-circle small">{jobReadiness.score}</div>
+                    <p className="career-role">{jobReadiness.label} readiness</p>
+                    <p className="insight-text">{jobReadiness.summary}</p>
+                  </>
+                ) : (
+                  <p className="insight-text">No readiness score yet.</p>
+                )}
+              </div>
+            </div>
 
-                  {topMissingSkills.map((item, idx) => (
-                    <div key={idx} className="mini-bar-row">
-                      <div className="mini-bar-label">{item.skill}</div>
-                      <div className="mini-bar-track">
-                        <div
-                          className="mini-bar-fill"
-                          style={{ width: `${Math.min(item.count * 18, 100)}%` }}
-                        />
-                      </div>
-                      <div className="mini-bar-value">{item.count}</div>
-                    </div>
-                  ))}
+            <div className="jobs-card">
+              <div className="jobs-header">
+                <div>
+                  <p className="section-kicker">CV improvement</p>
+                  <h4>Tips to strengthen your profile</h4>
                 </div>
               </div>
+
+              <ul className="guide-list">
+                {cvTips.length === 0 ? (
+                  <li>No CV tips yet.</li>
+                ) : (
+                  cvTips.map((tip, idx) => <li key={idx}>{tip}</li>)
+                )}
+              </ul>
             </div>
 
             <div className="jobs-card">
@@ -392,72 +405,24 @@ export default function ProfilePage() {
               </div>
 
               <div className="cv-history-list">
-                {uploadedCvs.length === 0 && (
-                  <p className="insight-text">No uploaded CVs yet.</p>
-                )}
+                {uploadedCvs.length === 0 && <p className="insight-text">No uploaded CVs yet.</p>}
 
                 {uploadedCvs.map((cv, idx) => (
                   <div className="cv-history-item" key={idx}>
                     <div>
-                      <div className="cv-file-name">
-                        {cv.original_name || "Untitled CV"}
-                      </div>
-                      <div className="cv-file-date">
-                        {cv.uploaded_at || "Recently uploaded"}
-                      </div>
+                      <div className="cv-file-name">{cv.original_name || "Untitled CV"}</div>
+                      <div className="cv-file-date">{cv.uploaded_at || "Recently uploaded"}</div>
                     </div>
 
                     {cv.azure_blob_url ? (
-                      <a
-                        className="btn-primary cv-btn"
-                        href={cv.azure_blob_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
+                      <a className="btn-primary cv-btn" href={cv.azure_blob_url} target="_blank" rel="noopener noreferrer">
                         View CV
                       </a>
                     ) : (
-                      <button className="btn-primary cv-btn" disabled>
-                        No File URL
-                      </button>
+                      <button className="btn-primary cv-btn" disabled>No File URL</button>
                     )}
                   </div>
                 ))}
-              </div>
-            </div>
-
-            <div className="jobs-card">
-              <div className="jobs-header">
-                <div>
-                  <p className="section-kicker">Extracted profile</p>
-                  <h4>All Skills & Qualifications</h4>
-                </div>
-              </div>
-
-              <div className="profile-tags-section">
-                <p className="profile-tag-title">Skills</p>
-                <div className="chips">
-                  {extractedSkills.length === 0 && (
-                    <div className="chip-empty">No extracted skills yet</div>
-                  )}
-                  {extractedSkills.map((skill, idx) => (
-                    <span key={idx} className="chip chip-orange">
-                      {skill}
-                    </span>
-                  ))}
-                </div>
-
-                <p className="profile-tag-title">Qualifications</p>
-                <div className="chips">
-                  {extractedQualifications.length === 0 && (
-                    <div className="chip-empty">No extracted qualifications yet</div>
-                  )}
-                  {extractedQualifications.map((qual, idx) => (
-                    <span key={idx} className="chip chip-blue">
-                      {qual}
-                    </span>
-                  ))}
-                </div>
               </div>
             </div>
 
@@ -478,9 +443,7 @@ export default function ProfilePage() {
                   <div className="job-item" key={idx}>
                     <div className="job-top">
                       <div>
-                        <div className="job-title">
-                          {application.title || "Untitled role"}
-                        </div>
+                        <div className="job-title">{application.title || "Untitled role"}</div>
 
                         <div className="job-meta">
                           {application.company && <span>{application.company}</span>}
@@ -503,9 +466,7 @@ export default function ProfilePage() {
                         className="application-status-select"
                         value={application.status}
                         disabled={updatingAppId === application.id}
-                        onChange={(e) =>
-                          updateApplicationStatus(application.id, e.target.value)
-                        }
+                        onChange={(e) => updateApplicationStatus(application.id, e.target.value)}
                       >
                         <option value="Applied">Applied</option>
                         <option value="Interviewing">Interviewing</option>
@@ -523,6 +484,28 @@ export default function ProfilePage() {
                           Open Job
                         </a>
                       )}
+                    </div>
+
+                    <div className="application-notes-block">
+                      <label className="notes-label">Application notes</label>
+                      <textarea
+                        className="application-notes-textarea"
+                        value={notesMap[application.id] || ""}
+                        onChange={(e) =>
+                          setNotesMap((prev) => ({
+                            ...prev,
+                            [application.id]: e.target.value,
+                          }))
+                        }
+                        placeholder="Add follow-up notes, interview details, recruiter feedback..."
+                      />
+                      <button
+                        className="btn-secondary-inline"
+                        onClick={() => saveApplicationNotes(application.id)}
+                        disabled={savingNotesId === application.id}
+                      >
+                        {savingNotesId === application.id ? "Saving..." : "Save Notes"}
+                      </button>
                     </div>
                   </div>
                 ))}
@@ -546,10 +529,7 @@ export default function ProfilePage() {
                   <div className="job-item" key={idx}>
                     <div className="job-top">
                       <div>
-                        <div className="job-title">
-                          {job.title || job.job_title || "Untitled role"}
-                        </div>
-
+                        <div className="job-title">{job.title || job.job_title || "Untitled role"}</div>
                         <div className="job-meta">
                           {job.company && <span>{job.company}</span>}
                           {job.location && <span> • {job.location}</span>}

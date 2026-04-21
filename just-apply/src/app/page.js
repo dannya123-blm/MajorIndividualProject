@@ -30,6 +30,11 @@ export default function HomePage() {
   const [jobStats, setJobStats] = useState(null);
   const [savedJobs, setSavedJobs] = useState([]);
   const [applications, setApplications] = useState([]);
+  const [careerTarget, setCareerTarget] = useState("");
+  const [jobReadiness, setJobReadiness] = useState(null);
+  const [cvTips, setCvTips] = useState([]);
+  const [compareJobs, setCompareJobs] = useState([]);
+
   const [sortBy, setSortBy] = useState("match_percentage");
   const [industryFilter, setIndustryFilter] = useState("All");
   const [locationFilter, setLocationFilter] = useState("All");
@@ -47,9 +52,7 @@ export default function HomePage() {
   const fetchCurrentUser = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/me`, {
-        headers: {
-          ...getAuthHeaders(),
-        },
+        headers: { ...getAuthHeaders() },
       });
 
       if (!res.ok) {
@@ -70,9 +73,7 @@ export default function HomePage() {
   const fetchSavedJobs = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/saved-jobs`, {
-        headers: {
-          ...getAuthHeaders(),
-        },
+        headers: { ...getAuthHeaders() },
       });
 
       if (!res.ok) return;
@@ -88,15 +89,31 @@ export default function HomePage() {
   const fetchApplications = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/applications`, {
-        headers: {
-          ...getAuthHeaders(),
-        },
+        headers: { ...getAuthHeaders() },
       });
 
       if (!res.ok) return;
 
       const data = await res.json();
       setApplications(data.applications || []);
+      if (data.db_mode) setDbMode(data.db_mode);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchProfileData = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/profile-data`, {
+        headers: { ...getAuthHeaders() },
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      setCareerTarget(data.career_target || "");
+      setJobReadiness(data.job_readiness || null);
+      setCvTips(data.cv_tips || []);
       if (data.db_mode) setDbMode(data.db_mode);
     } catch (err) {
       console.error(err);
@@ -115,6 +132,7 @@ export default function HomePage() {
         fetchCurrentUser(),
         fetchSavedJobs(),
         fetchApplications(),
+        fetchProfileData(),
       ]);
 
       setLoadingPage(false);
@@ -125,9 +143,7 @@ export default function HomePage() {
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE_URL}/api/logout`, {
-        method: "POST",
-      });
+      await fetch(`${API_BASE_URL}/api/logout`, { method: "POST" });
     } catch (err) {
       console.error(err);
     } finally {
@@ -152,6 +168,7 @@ export default function HomePage() {
       setIndustryFilter("All");
       setLocationFilter("All");
       setOpenJobId(null);
+      setCompareJobs([]);
     }
   };
 
@@ -169,9 +186,7 @@ export default function HomePage() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/upload-cv`, {
         method: "POST",
-        headers: {
-          ...getAuthHeaders(),
-        },
+        headers: { ...getAuthHeaders() },
         body: formData,
       });
 
@@ -187,6 +202,7 @@ export default function HomePage() {
       setPreview(data.text_preview || "");
       setAzureBlobUrl(data.azure_blob_url || "");
       if (data.db_mode) setDbMode(data.db_mode);
+
       setStatus("CV parsed. Searching live jobs in the US...");
 
       const liveRes = await fetch(`${API_BASE_URL}/api/live-jobs`, {
@@ -207,7 +223,6 @@ export default function HomePage() {
       const liveData = await liveRes.json();
 
       if (!liveRes.ok) {
-        console.error("Live jobs error:", liveData);
         const backendError =
           liveData?.error ||
           liveData?.message ||
@@ -233,6 +248,8 @@ export default function HomePage() {
       setActiveTab("home");
       setOpenJobId(returnedJobs[0]?.job_id || null);
 
+      await fetchProfileData();
+
       setStatus(
         `CV parsed successfully. Loaded ${returnedJobs.length} live US jobs from ${liveData.metadata?.source || "Adzuna"}.`
       );
@@ -256,6 +273,7 @@ export default function HomePage() {
       const data = await res.json();
       setSavedJobs(data.saved_jobs || []);
       if (data.db_mode) setDbMode(data.db_mode);
+      await fetchProfileData();
     } catch (err) {
       console.error(err);
     }
@@ -281,6 +299,7 @@ export default function HomePage() {
 
       setApplications(data.applications || []);
       if (data.db_mode) setDbMode(data.db_mode);
+      await fetchProfileData();
       window.open(data.apply_url, "_blank", "noopener,noreferrer");
     } catch (err) {
       console.error(err);
@@ -288,13 +307,48 @@ export default function HomePage() {
     }
   };
 
-  const isJobSaved = (jobId) => {
-    return savedJobs.some((job) => String(job.job_id) === String(jobId));
+  const updateCareerTarget = async (targetRole) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/career-target`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ target_role: targetRole }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Could not update career target.");
+        return;
+      }
+
+      setCareerTarget(data.career_target || "");
+      if (data.db_mode) setDbMode(data.db_mode);
+    } catch (err) {
+      console.error(err);
+    }
   };
+
+  const toggleCompareJob = (job) => {
+    setCompareJobs((prev) => {
+      const exists = prev.some((j) => String(j.job_id) === String(job.job_id));
+      if (exists) {
+        return prev.filter((j) => String(j.job_id) !== String(job.job_id));
+      }
+      if (prev.length >= 2) {
+        return [prev[1], job];
+      }
+      return [...prev, job];
+    });
+  };
+
+  const isJobSaved = (jobId) =>
+    savedJobs.some((job) => String(job.job_id) === String(jobId));
 
   const hasAppliedToJob = (externalJobId) => {
     if (!externalJobId) return false;
-
     return applications.some(
       (app) => String(app.external_job_id) === String(externalJobId)
     );
@@ -363,9 +417,7 @@ export default function HomePage() {
       }
 
       if (sortBy === "job_title") {
-        const aTitle = (a.title || a.job_title || "").toLowerCase();
-        const bTitle = (b.title || b.job_title || "").toLowerCase();
-        return aTitle.localeCompare(bTitle);
+        return (a.title || "").localeCompare(b.title || "");
       }
 
       return 0;
@@ -379,10 +431,8 @@ export default function HomePage() {
   const averageMatchRate =
     filteredJobs.length > 0
       ? Math.round(
-          filteredJobs.reduce(
-            (sum, job) => sum + (job.match_percentage || 0),
-            0
-          ) / filteredJobs.length
+          filteredJobs.reduce((sum, job) => sum + (job.match_percentage || 0), 0) /
+            filteredJobs.length
         )
       : 0;
 
@@ -404,7 +454,9 @@ export default function HomePage() {
       .map(([skill, count]) => ({ skill, count }));
   }, [filteredJobs]);
 
-  const careerPath = useMemo(() => {
+  const generatedCareerPath = useMemo(() => {
+    if (careerTarget) return careerTarget;
+
     const loweredSkills = skills.map((s) => s.toLowerCase());
 
     if (
@@ -412,14 +464,7 @@ export default function HomePage() {
         ["python", "sql", "data analysis", "data analytics", "power bi"].includes(s)
       )
     ) {
-      return {
-        role: "Data Analyst",
-        nextSteps: [
-          "Improve SQL joins and reporting",
-          "Build one dashboard portfolio project",
-          "Target junior and graduate analyst roles",
-        ],
-      };
+      return "Data Analyst";
     }
 
     if (
@@ -427,14 +472,7 @@ export default function HomePage() {
         ["react", "javascript", "typescript", "html", "css"].includes(s)
       )
     ) {
-      return {
-        role: "Frontend Developer",
-        nextSteps: [
-          "Strengthen React projects",
-          "Improve responsive UI accessibility",
-          "Target junior frontend roles",
-        ],
-      };
+      return "Frontend Developer";
     }
 
     if (
@@ -442,35 +480,17 @@ export default function HomePage() {
         ["aws", "azure", "docker", "cloud", "kubernetes"].includes(s)
       )
     ) {
-      return {
-        role: "Cloud Engineer",
-        nextSteps: [
-          "Build one cloud deployment project",
-          "Improve DevOps tooling knowledge",
-          "Target cloud support and cloud engineer roles",
-        ],
-      };
+      return "Cloud Engineer";
     }
 
-    return {
-      role: "Software Engineer",
-      nextSteps: [
-        "Build one full-stack portfolio project",
-        "Improve backend + database confidence",
-        "Apply to software engineer graduate roles",
-      ],
-    };
-  }, [skills]);
+    return "Software Engineer";
+  }, [skills, careerTarget]);
 
   const generateExplanation = (job) => {
     if (job.explanation) return job.explanation;
 
     const matched = Array.isArray(job.matched_skills) ? job.matched_skills : [];
     const missing = Array.isArray(job.missing_skills) ? job.missing_skills : [];
-
-    if (matched.length === 0 && missing.length === 0) {
-      return "This role has limited matching detail available.";
-    }
 
     if (matched.length > 0 && missing.length === 0) {
       return `You already match the main visible skills for this role, including ${matched
@@ -479,20 +499,19 @@ export default function HomePage() {
     }
 
     if (matched.length > 0) {
-      return `You match ${matched.length} key skill${
-        matched.length > 1 ? "s" : ""
-      }, including ${matched.slice(0, 3).join(", ")}, but you still need ${missing.length} more.`;
+      return `You match ${matched.length} key skills, including ${matched
+        .slice(0, 3)
+        .join(", ")}, but still need improvement in a few areas.`;
     }
 
-    return `This role highlights skills you may still need to build, such as ${missing
-      .slice(0, 3)
-      .join(", ")}.`;
+    return "This job was surfaced because it is related to your broader career direction.";
   };
 
-  const renderCompactJobCard = (job, idx, allowExpand = true) => {
+  const renderJobCard = (job, idx, allowExpand = true) => {
     const alreadyApplied = hasAppliedToJob(job.external_job_id);
     const expanded = openJobId === job.job_id;
     const chance = getInterviewChance(job.match_percentage || 0);
+    const isCompared = compareJobs.some((j) => String(j.job_id) === String(job.job_id));
 
     return (
       <div className={`job-item ${compactMode ? "compact-job-item" : ""}`} key={idx}>
@@ -511,16 +530,20 @@ export default function HomePage() {
 
           <div className="job-top-right">
             <div className="match-badge">
-              {getMatchLabel(job.match_percentage || 0)} •{" "}
-              {job.match_percentage || 0}%
+              {getMatchLabel(job.match_percentage || 0)} • {job.match_percentage || 0}%
             </div>
+
+            <button
+              className={`btn-secondary-inline ${isCompared ? "selected-compare" : ""}`}
+              onClick={() => toggleCompareJob(job)}
+            >
+              {isCompared ? "Selected" : "Compare"}
+            </button>
 
             {allowExpand && (
               <button
                 className="btn-secondary-inline"
-                onClick={() =>
-                  setOpenJobId(expanded ? null : job.job_id)
-                }
+                onClick={() => setOpenJobId(expanded ? null : job.job_id)}
               >
                 {expanded ? "Hide" : "View"}
               </button>
@@ -587,23 +610,6 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
-
-            {Array.isArray(job.missing_qualifications) &&
-              job.missing_qualifications.length > 0 && (
-                <div className="job-tags-block">
-                  <div className="job-tags-title">Missing qualifications</div>
-                  <div className="chips">
-                    {job.missing_qualifications.map((qual, qualIdx) => (
-                      <span
-                        key={`missing-qual-${idx}-${qualIdx}`}
-                        className="chip chip-neutral"
-                      >
-                        {qual}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
           </>
         )}
 
@@ -628,21 +634,14 @@ export default function HomePage() {
     );
   };
 
-  if (loadingPage) {
-    return <div style={{ padding: "40px" }}>Loading dashboard...</div>;
-  }
-
-  if (!currentUser) {
-    return null;
-  }
+  if (loadingPage) return <div style={{ padding: "40px" }}>Loading dashboard...</div>;
+  if (!currentUser) return null;
 
   return (
     <div className={`dashboard-root ${highContrast ? "high-contrast-mode" : ""}`}>
       <aside className="sidebar">
         <div className="sidebar-top">
-          <button className="icon-btn" title="Notifications">
-            🔔
-          </button>
+          <button className="icon-btn" title="Notifications">🔔</button>
         </div>
 
         <nav className="sidebar-nav">
@@ -659,22 +658,13 @@ export default function HomePage() {
       <main className="main">
         <header className="topbar">
           <div className="brand">
-            <Image
-              src={justwork}
-              alt="Just Apply logo"
-              width={22}
-              height={22}
-              className="brand-logo"
-            />
+            <Image src={justwork} alt="Just Apply logo" width={22} height={22} className="brand-logo" />
             <div className="brand-name">Just Apply</div>
           </div>
 
           <nav className="topnav">
             <button className="topnav-item active">Dashboard</button>
-            <button
-              className="topnav-item"
-              onClick={() => router.push("/profile")}
-            >
+            <button className="topnav-item" onClick={() => router.push("/profile")}>
               Applications
             </button>
 
@@ -684,12 +674,9 @@ export default function HomePage() {
               onMouseLeave={() => setShowProfileMenu(false)}
             >
               <button className="topnav-item">Profile</button>
-
               {showProfileMenu && (
                 <div className="profile-dropdown">
-                  <button onClick={() => router.push("/profile")}>
-                    Go to Profile
-                  </button>
+                  <button onClick={() => router.push("/profile")}>Go to Profile</button>
                   <button onClick={handleLogout}>Sign Out</button>
                 </div>
               )}
@@ -721,98 +708,20 @@ export default function HomePage() {
 
         <section className="dashboard-control-strip">
           <div className="dashboard-tabs">
-            <button
-              className={`tab-btn ${activeTab === "home" ? "active" : ""}`}
-              onClick={() => setActiveTab("home")}
-            >
-              Home
-            </button>
-            <button
-              className={`tab-btn ${activeTab === "jobs" ? "active" : ""}`}
-              onClick={() => setActiveTab("jobs")}
-            >
-              Jobs
-            </button>
-            <button
-              className={`tab-btn ${activeTab === "insights" ? "active" : ""}`}
-              onClick={() => setActiveTab("insights")}
-            >
-              Insights
-            </button>
+            <button className={`tab-btn ${activeTab === "home" ? "active" : ""}`} onClick={() => setActiveTab("home")}>Home</button>
+            <button className={`tab-btn ${activeTab === "jobs" ? "active" : ""}`} onClick={() => setActiveTab("jobs")}>Jobs</button>
+            <button className={`tab-btn ${activeTab === "insights" ? "active" : ""}`} onClick={() => setActiveTab("insights")}>Insights</button>
           </div>
 
           <div className="accessibility-controls">
-            <button
-              className={`toggle-btn ${compactMode ? "active" : ""}`}
-              onClick={() => setCompactMode((prev) => !prev)}
-            >
+            <button className={`toggle-btn ${compactMode ? "active" : ""}`} onClick={() => setCompactMode((prev) => !prev)}>
               {compactMode ? "Compact On" : "Compact Off"}
             </button>
-            <button
-              className={`toggle-btn ${highContrast ? "active" : ""}`}
-              onClick={() => setHighContrast((prev) => !prev)}
-            >
+            <button className={`toggle-btn ${highContrast ? "active" : ""}`} onClick={() => setHighContrast((prev) => !prev)}>
               {highContrast ? "High Contrast On" : "High Contrast Off"}
             </button>
           </div>
         </section>
-
-        {showGuideBubble && (
-          <div className="guide-bubble">
-            <button
-              className="guide-close"
-              onClick={() => setShowGuideBubble(false)}
-            >
-              ×
-            </button>
-            <p className="guide-kicker">Quick guide</p>
-            <h4>What Just Apply helps with</h4>
-            <ul className="guide-list">
-              <li>Upload your CV</li>
-              <li>See live matched jobs</li>
-              <li>Understand why jobs fit</li>
-              <li>Improve missing skills</li>
-              <li>Track your applications</li>
-            </ul>
-            <button
-              className="btn-primary"
-              onClick={() => router.push("/profile")}
-            >
-              Take me there
-            </button>
-          </div>
-        )}
-
-        {showProfilePrompt && (
-          <div className="profile-prompt">
-            <button
-              className="guide-close"
-              onClick={() => setShowProfilePrompt(false)}
-            >
-              ×
-            </button>
-            <p className="guide-kicker">New insight available</p>
-            <h4>Your full profile is ready</h4>
-            <p className="insight-text">
-              View your saved jobs, uploaded CV history, applications, and
-              personal analytics on your profile page.
-            </p>
-            <div className="prompt-actions">
-              <button
-                className="btn-primary"
-                onClick={() => router.push("/profile")}
-              >
-                Take me there
-              </button>
-              <button
-                className="btn-secondary-inline"
-                onClick={() => setShowProfilePrompt(false)}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        )}
 
         <section className="stats-row">
           <div className="stat-card">
@@ -852,19 +761,11 @@ export default function HomePage() {
                 </div>
 
                 <label className="dropzone">
-                  <input
-                    type="file"
-                    accept=".pdf,.doc,.docx,.txt"
-                    onChange={handleFileChange}
-                  />
+                  <input type="file" accept=".pdf,.doc,.docx,.txt" onChange={handleFileChange} />
                   <div className="drop-inner">
                     <div className="cloud">☁️</div>
-                    <div className="drop-text">
-                      Drag and drop CV here or click to browse
-                    </div>
-                    <div className="drop-sub">
-                      Supported formats: PDF, DOCX, TXT
-                    </div>
+                    <div className="drop-text">Drag and drop CV here or click to browse</div>
+                    <div className="drop-sub">Supported formats: PDF, DOCX, TXT</div>
                   </div>
                 </label>
 
@@ -883,11 +784,7 @@ export default function HomePage() {
                 {azureBlobUrl && (
                   <div className="azure">
                     <span className="azure-label">Stored in Azure</span>
-                    <a
-                      href={azureBlobUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
+                    <a href={azureBlobUrl} target="_blank" rel="noopener noreferrer">
                       View uploaded file
                     </a>
                   </div>
@@ -922,15 +819,11 @@ export default function HomePage() {
                     )}
 
                     {skills.map((s, i) => (
-                      <span key={`s-${i}`} className="chip chip-orange">
-                        {s}
-                      </span>
+                      <span key={`s-${i}`} className="chip chip-orange">{s}</span>
                     ))}
 
                     {qualifications.map((q, i) => (
-                      <span key={`q-${i}`} className="chip chip-blue">
-                        {q}
-                      </span>
+                      <span key={`q-${i}`} className="chip chip-blue">{q}</span>
                     ))}
                   </div>
                 </div>
@@ -941,30 +834,77 @@ export default function HomePage() {
               <div className="insights-card">
                 <div className="section-head compact">
                   <div>
-                    <p className="section-kicker">Career path</p>
-                    <h4>Best next direction</h4>
+                    <p className="section-kicker">Job readiness</p>
+                    <h4>Your readiness score</h4>
                   </div>
                 </div>
 
-                <p className="career-role">Recommended path: {careerPath.role}</p>
+                {jobReadiness ? (
+                  <>
+                    <div className="readiness-score-circle">{jobReadiness.score}</div>
+                    <p className="career-role">{jobReadiness.label} readiness</p>
+                    <p className="insight-text">{jobReadiness.summary}</p>
+                    <ul className="guide-list">
+                      {(jobReadiness.reasons || []).map((reason, idx) => (
+                        <li key={idx}>{reason}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p className="insight-text">Upload a CV to generate readiness insights.</p>
+                )}
+              </div>
+
+              <div className="insights-card">
+                <div className="section-head compact">
+                  <div>
+                    <p className="section-kicker">Career target</p>
+                    <h4>Select your target role</h4>
+                  </div>
+                </div>
+
+                <select
+                  className="career-target-select"
+                  value={careerTarget || generatedCareerPath}
+                  onChange={(e) => updateCareerTarget(e.target.value)}
+                >
+                  <option>Data Analyst</option>
+                  <option>Frontend Developer</option>
+                  <option>Cloud Engineer</option>
+                  <option>Software Engineer</option>
+                  <option>Full Stack Developer</option>
+                  <option>UI/UX Designer</option>
+                </select>
+
+                <p className="insight-text">
+                  This helps shape the roles and skill direction you should focus on.
+                </p>
+              </div>
+
+              <div className="insights-card">
+                <div className="section-head compact">
+                  <div>
+                    <p className="section-kicker">CV improvement</p>
+                    <h4>Tips to strengthen your CV</h4>
+                  </div>
+                </div>
+
                 <ul className="guide-list">
-                  {careerPath.nextSteps.map((step, idx) => (
-                    <li key={idx}>{step}</li>
-                  ))}
+                  {cvTips.length === 0 ? (
+                    <li>Upload a CV to receive improvement suggestions.</li>
+                  ) : (
+                    cvTips.map((tip, idx) => <li key={idx}>{tip}</li>)
+                  )}
                 </ul>
               </div>
 
               <div className="insights-card">
                 <div className="section-head compact">
                   <div>
-                    <p className="section-kicker">Quick insight</p>
-                    <h4>Improve your chances</h4>
+                    <p className="section-kicker">Skill gap</p>
+                    <h4>What to improve next</h4>
                   </div>
                 </div>
-
-                <p className="insight-text">
-                  Focus on these missing skills to increase your match quality:
-                </p>
 
                 <div className="chips">
                   {topMissingSkills.length === 0 && (
@@ -988,16 +928,13 @@ export default function HomePage() {
                       <h4>Best Jobs Right Now ({homeJobs.length})</h4>
                     </div>
 
-                    <button
-                      className="btn-secondary-inline"
-                      onClick={() => setActiveTab("jobs")}
-                    >
+                    <button className="btn-secondary-inline" onClick={() => setActiveTab("jobs")}>
                       View all jobs
                     </button>
                   </div>
 
                   <div className="jobs-list">
-                    {homeJobs.map((job, idx) => renderCompactJobCard(job, idx, true))}
+                    {homeJobs.map((job, idx) => renderJobCard(job, idx, true))}
                   </div>
                 </div>
               </section>
@@ -1016,8 +953,7 @@ export default function HomePage() {
 
                 {jobStats && (
                   <div className="summary-pill">
-                    {jobStats.source || "Adzuna"} •{" "}
-                    {jobStats.total_results_returned || filteredJobs.length} results
+                    {jobStats.source || "Adzuna"} • {jobStats.total_results_returned || filteredJobs.length} results
                   </div>
                 )}
               </div>
@@ -1025,10 +961,7 @@ export default function HomePage() {
               <div className="filter-controls">
                 <div className="filter-group">
                   <label>Sort by</label>
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value)}
-                  >
+                  <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
                     <option value="match_percentage">Match Percentage</option>
                     <option value="total_score">Total Score</option>
                     <option value="job_title">Job Title</option>
@@ -1037,35 +970,67 @@ export default function HomePage() {
 
                 <div className="filter-group">
                   <label>Industry</label>
-                  <select
-                    value={industryFilter}
-                    onChange={(e) => setIndustryFilter(e.target.value)}
-                  >
+                  <select value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)}>
                     {industries.map((industry) => (
-                      <option key={industry} value={industry}>
-                        {industry}
-                      </option>
+                      <option key={industry} value={industry}>{industry}</option>
                     ))}
                   </select>
                 </div>
 
                 <div className="filter-group filter-wide">
                   <label>Location</label>
-                  <select
-                    value={locationFilter}
-                    onChange={(e) => setLocationFilter(e.target.value)}
-                  >
+                  <select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)}>
                     {locations.map((location) => (
-                      <option key={location} value={location}>
-                        {location}
-                      </option>
+                      <option key={location} value={location}>{location}</option>
                     ))}
                   </select>
                 </div>
               </div>
 
+              {compareJobs.length === 2 && (
+                <div className="compare-panel">
+                  <div className="jobs-header">
+                    <div>
+                      <p className="section-kicker">Job comparison</p>
+                      <h4>Compare 2 jobs side by side</h4>
+                    </div>
+                  </div>
+
+                  <div className="compare-grid">
+                    {compareJobs.map((job, idx) => (
+                      <div className="compare-card" key={idx}>
+                        <h4>{job.title}</h4>
+                        <p className="insight-text">{job.company} • {job.location}</p>
+                        <div className="compare-stat">Match: {job.match_percentage || 0}%</div>
+                        <div className="compare-stat">Score: {job.total_score || 0}</div>
+                        <div className="compare-stat">Skills matched: {job.skill_score || 0}</div>
+                        <div className="compare-stat">Qualifications: {job.qual_score || 0}</div>
+
+                        <div className="job-tags-block">
+                          <div className="job-tags-title">Matched skills</div>
+                          <div className="chips">
+                            {(job.matched_skills || []).slice(0, 5).map((skill, skillIdx) => (
+                              <span key={skillIdx} className="chip chip-orange">{skill}</span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="job-tags-block">
+                          <div className="job-tags-title">Missing skills</div>
+                          <div className="chips">
+                            {(job.missing_skills || []).slice(0, 5).map((skill, skillIdx) => (
+                              <span key={skillIdx} className="chip chip-blue">{skill}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="jobs-list">
-                {filteredJobs.map((job, idx) => renderCompactJobCard(job, idx, true))}
+                {filteredJobs.map((job, idx) => renderJobCard(job, idx, true))}
               </div>
             </div>
           </section>
@@ -1089,11 +1054,25 @@ export default function HomePage() {
                       <h4>Where you fit best</h4>
                     </div>
                   </div>
-                  <p className="career-role">Recommended role: {careerPath.role}</p>
+                  <p className="career-role">Recommended role: {careerTarget || generatedCareerPath}</p>
+                  <p className="insight-text">
+                    Your selected or inferred direction helps make recommendations more meaningful.
+                  </p>
+                </div>
+
+                <div className="insights-card large">
+                  <div className="section-head compact">
+                    <div>
+                      <p className="section-kicker">CV improvement</p>
+                      <h4>Practical next steps</h4>
+                    </div>
+                  </div>
                   <ul className="guide-list">
-                    {careerPath.nextSteps.map((step, idx) => (
-                      <li key={idx}>{step}</li>
-                    ))}
+                    {cvTips.length === 0 ? (
+                      <li>No CV tips yet. Upload a CV to generate them.</li>
+                    ) : (
+                      cvTips.map((tip, idx) => <li key={idx}>{tip}</li>)
+                    )}
                   </ul>
                 </div>
 
@@ -1128,41 +1107,20 @@ export default function HomePage() {
                 <div className="insights-card large">
                   <div className="section-head compact">
                     <div>
-                      <p className="section-kicker">Extracted profile</p>
-                      <h4>Your skills & qualifications</h4>
+                      <p className="section-kicker">Job readiness</p>
+                      <h4>How employable your profile looks</h4>
                     </div>
                   </div>
 
-                  <p className="profile-tag-title">Skills</p>
-                  <div className="chips">
-                    {skills.length === 0 && <div className="chip-empty">No skills extracted</div>}
-                    {skills.map((s, i) => (
-                      <span key={i} className="chip chip-orange">{s}</span>
-                    ))}
-                  </div>
-
-                  <p className="profile-tag-title">Qualifications</p>
-                  <div className="chips">
-                    {qualifications.length === 0 && <div className="chip-empty">No qualifications extracted</div>}
-                    {qualifications.map((q, i) => (
-                      <span key={i} className="chip chip-blue">{q}</span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="insights-card large">
-                  <div className="section-head compact">
-                    <div>
-                      <p className="section-kicker">What makes this unique</p>
-                      <h4>More than a job board</h4>
-                    </div>
-                  </div>
-                  <ul className="guide-list">
-                    <li>Explains why a role matches your CV</li>
-                    <li>Shows missing skills to improve employability</li>
-                    <li>Suggests the best career direction from your profile</li>
-                    <li>Tracks your real job applications in one place</li>
-                  </ul>
+                  {jobReadiness ? (
+                    <>
+                      <div className="readiness-score-circle small">{jobReadiness.score}</div>
+                      <p className="career-role">{jobReadiness.label} readiness</p>
+                      <p className="insight-text">{jobReadiness.summary}</p>
+                    </>
+                  ) : (
+                    <p className="insight-text">Upload a CV to generate readiness analysis.</p>
+                  )}
                 </div>
               </div>
             </div>

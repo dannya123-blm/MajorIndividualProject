@@ -107,7 +107,7 @@ swagger = Swagger(
         "info": {
             "title": "Just Apply API",
             "description": "API for CV upload, NLP extraction, live Adzuna jobs, saved jobs, applications, profile analytics, and authentication.",
-            "version": "5.0.0",
+            "version": "6.0.0",
         }
     },
 )
@@ -176,6 +176,15 @@ QUALIFICATION_KEYWORDS = [
     "postgraduate diploma", "aws certified", "azure certification",
     "oracle certified", "microsoft certified", "ccna", "comptia"
 ]
+
+ALLOWED_CAREER_TARGETS = {
+    "Data Analyst",
+    "Frontend Developer",
+    "Cloud Engineer",
+    "Software Engineer",
+    "Full Stack Developer",
+    "UI/UX Designer",
+}
 
 # =========================================================
 # DATABASE HELPERS
@@ -330,6 +339,18 @@ def init_azure_db():
     )
     """)
 
+    cursor.execute("""
+    IF NOT EXISTS (
+        SELECT * FROM sysobjects WHERE name='user_career_targets' AND xtype='U'
+    )
+    CREATE TABLE user_career_targets (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        user_email NVARCHAR(255) UNIQUE NOT NULL,
+        target_role NVARCHAR(255) NOT NULL,
+        updated_at DATETIME DEFAULT GETDATE()
+    )
+    """)
+
     conn.commit()
     cursor.close()
     conn.close()
@@ -398,6 +419,15 @@ def init_sqlite_db():
         status TEXT NOT NULL DEFAULT 'Applied',
         notes TEXT,
         applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_career_targets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_email TEXT UNIQUE NOT NULL,
+        target_role TEXT NOT NULL,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
@@ -949,6 +979,126 @@ def update_job_application_status_for_user(user_email: str, application_id: int,
     cursor.close()
     conn.close()
 
+
+def update_job_application_notes_for_user(user_email: str, application_id: int, notes: str):
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE job_applications
+            SET notes = ?
+            WHERE id = ? AND user_email = ?
+        """, (notes, application_id, user_email))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE job_applications
+        SET notes = ?
+        WHERE id = ? AND user_email = ?
+    """, (notes, application_id, user_email))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+# =========================================================
+# CAREER TARGET HELPERS
+# =========================================================
+def get_user_career_target(user_email: str) -> str:
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT target_role
+            FROM user_career_targets
+            WHERE user_email = ?
+        """, (user_email,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row:
+            return ""
+
+        row = dict_from_row(row)
+        return row["target_role"]
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT target_role
+        FROM user_career_targets
+        WHERE user_email = ?
+    """, (user_email,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not row:
+        return ""
+
+    return row[0]
+
+
+def save_user_career_target(user_email: str, target_role: str):
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id
+            FROM user_career_targets
+            WHERE user_email = ?
+        """, (user_email,))
+        existing = cursor.fetchone()
+
+        if existing:
+            cursor.execute("""
+                UPDATE user_career_targets
+                SET target_role = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE user_email = ?
+            """, (target_role, user_email))
+        else:
+            cursor.execute("""
+                INSERT INTO user_career_targets (user_email, target_role)
+                VALUES (?, ?)
+            """, (user_email, target_role))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id
+        FROM user_career_targets
+        WHERE user_email = ?
+    """, (user_email,))
+    existing = cursor.fetchone()
+
+    if existing:
+        cursor.execute("""
+            UPDATE user_career_targets
+            SET target_role = ?, updated_at = GETDATE()
+            WHERE user_email = ?
+        """, (target_role, user_email))
+    else:
+        cursor.execute("""
+            INSERT INTO user_career_targets (user_email, target_role)
+            VALUES (?, ?)
+        """, (user_email, target_role))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
 # =========================================================
 # NLP HELPERS
 # =========================================================
@@ -1056,9 +1206,135 @@ def generate_job_explanation(matched_skills, missing_skills):
     return "This role was surfaced as a relevant live opportunity based on your profile."
 
 # =========================================================
+# CV TIPS / READINESS
+# =========================================================
+def generate_cv_improvement_tips(skills: list, qualifications: list, text_preview: str) -> list:
+    tips = []
+
+    lowered_skills = [str(skill).lower() for skill in skills]
+    lowered_quals = [str(q).lower() for q in qualifications]
+    preview = (text_preview or "").lower()
+
+    if "github" not in preview and "portfolio" not in preview:
+        tips.append("Add a GitHub or portfolio link to make your profile stronger.")
+
+    if "project" not in preview:
+        tips.append("Include more project work so employers can see practical experience.")
+
+    if not any(skill in lowered_skills for skill in ["sql", "python", "java", "react", "aws", "azure"]):
+        tips.append("Add more technical tools and platforms to improve matching accuracy.")
+
+    if "experience" not in preview and "internship" not in preview:
+        tips.append("Highlight work experience, internships, or placement projects more clearly.")
+
+    if not lowered_quals:
+        tips.append("State your degree or certifications more clearly in the CV.")
+
+    if len(preview) < 250:
+        tips.append("Your CV preview looks short. Add more detail on skills, projects, and achievements.")
+
+    if not tips:
+        tips.append("Your CV looks strong. Focus on role-specific keywords for better job matches.")
+
+    return tips[:5]
+
+
+def calculate_job_readiness(skills: list, qualifications: list, saved_jobs: list, applications: list) -> dict:
+    score = 0
+    reasons = []
+
+    skill_count = len(skills or [])
+    qual_count = len(qualifications or [])
+    saved_count = len(saved_jobs or [])
+    applications_count = len(applications or [])
+
+    if skill_count >= 8:
+        score += 30
+        reasons.append("Strong visible technical skill base.")
+    elif skill_count >= 4:
+        score += 20
+        reasons.append("Moderate skill coverage detected.")
+    else:
+        score += 10
+        reasons.append("More visible skills should be added to improve matching.")
+
+    if qual_count >= 2:
+        score += 20
+        reasons.append("Qualifications are clearly visible.")
+    elif qual_count >= 1:
+        score += 12
+        reasons.append("At least one qualification is visible.")
+    else:
+        score += 5
+        reasons.append("Qualifications are not clearly visible.")
+
+    if saved_count >= 3:
+        score += 15
+        reasons.append("You are actively reviewing relevant roles.")
+    elif saved_count >= 1:
+        score += 8
+        reasons.append("You have started saving target roles.")
+
+    if applications_count >= 3:
+        score += 20
+        reasons.append("You are actively applying to jobs.")
+    elif applications_count >= 1:
+        score += 12
+        reasons.append("You have started applying to live jobs.")
+
+    if skill_count >= 1 and applications_count >= 1:
+        score += 10
+
+    if score >= 80:
+        label = "High"
+        summary = "You look job-ready for the roles currently being targeted."
+    elif score >= 55:
+        label = "Medium"
+        summary = "You are on the right track, but a few improvements would help."
+    else:
+        label = "Low"
+        summary = "Your profile needs more improvement before it becomes competitive."
+
+    return {
+        "score": min(score, 100),
+        "label": label,
+        "summary": summary,
+        "reasons": reasons[:4],
+    }
+
+
+def get_latest_cv_data(user_email: str) -> dict:
+    uploaded_cvs = get_uploaded_cvs_by_user(user_email)
+    if not uploaded_cvs:
+        return {
+            "skills": [],
+            "qualifications": [],
+            "text_preview": "",
+        }
+
+    latest = uploaded_cvs[0]
+    return {
+        "skills": latest.get("skills", []),
+        "qualifications": latest.get("qualifications", []),
+        "text_preview": latest.get("text_preview", ""),
+    }
+
+# =========================================================
 # ADZUNA HELPERS
 # =========================================================
-def build_search_query_from_skills(skills: list[str]) -> str:
+def build_search_query_from_skills(skills: list[str], career_target: str = "") -> str:
+    if career_target:
+        mapping = {
+            "Data Analyst": "data analyst",
+            "Frontend Developer": "frontend developer",
+            "Cloud Engineer": "cloud engineer",
+            "Software Engineer": "software engineer",
+            "Full Stack Developer": "full stack developer",
+            "UI/UX Designer": "ui ux designer",
+        }
+        if career_target in mapping:
+            return mapping[career_target]
+
     lowered_skills = [str(skill).lower().strip() for skill in skills]
 
     if any(
@@ -1183,11 +1459,12 @@ def search_live_jobs_adzuna(
     where: str = "",
     page: int = 1,
     results_per_page: int = 20,
+    career_target: str = "",
 ):
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         raise RuntimeError("Adzuna API credentials are missing.")
 
-    primary_query = build_search_query_from_skills(skills)
+    primary_query = build_search_query_from_skills(skills, career_target=career_target)
 
     fallback_queries = [
         primary_query,
@@ -1198,11 +1475,18 @@ def search_live_jobs_adzuna(
         "full stack developer",
     ]
 
+    seen_queries = []
+    unique_queries = []
+    for query in fallback_queries:
+        if query not in seen_queries:
+            seen_queries.append(query)
+            unique_queries.append(query)
+
     seen_ids = set()
     combined_jobs = []
     total_results_seen = 0
 
-    for query_text in fallback_queries:
+    for query_text in unique_queries:
         url = f"https://api.adzuna.com/v1/api/jobs/{ADZUNA_COUNTRY}/search/{page}"
         params = {
             "app_id": ADZUNA_APP_ID,
@@ -1256,6 +1540,7 @@ def search_live_jobs_adzuna(
         "metadata": {
             "source": "Adzuna",
             "query_used": primary_query,
+            "career_target": career_target,
             "total_results_returned": total_results_seen,
             "jobs_with_matches": len(
                 [job for job in top_jobs if (job.get("total_score", 0) or 0) > 0]
@@ -1541,6 +1826,36 @@ def logout():
     return jsonify({"message": "Logged out"}), 200
 
 
+@app.route("/api/career-target", methods=["GET"])
+@jwt_required()
+def get_career_target():
+    user_email = get_jwt_identity()
+    target_role = get_user_career_target(user_email)
+    return jsonify({
+        "career_target": target_role,
+        "db_mode": DB_MODE,
+    }), 200
+
+
+@app.route("/api/career-target", methods=["POST"])
+@jwt_required()
+def update_career_target():
+    user_email = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+    target_role = str(data.get("target_role", "")).strip()
+
+    if target_role not in ALLOWED_CAREER_TARGETS:
+        return jsonify({"error": "Invalid career target"}), 400
+
+    save_user_career_target(user_email, target_role)
+
+    return jsonify({
+        "message": "Career target updated",
+        "career_target": target_role,
+        "db_mode": DB_MODE,
+    }), 200
+
+
 @app.route("/api/upload-cv", methods=["POST"])
 @jwt_required()
 def upload_and_parse_cv():
@@ -1603,6 +1918,7 @@ def upload_and_parse_cv():
 @app.route("/api/live-jobs", methods=["POST"])
 @jwt_required()
 def live_jobs():
+    user_email = get_jwt_identity()
     data = request.get_json(silent=True) or {}
 
     raw_skills = data.get("skills", [])
@@ -1610,6 +1926,10 @@ def live_jobs():
     where = str(data.get("where", "")).strip()
     page = int(data.get("page", 1) or 1)
     results_per_page = int(data.get("results_per_page", 20) or 20)
+    career_target = str(data.get("career_target", "")).strip()
+
+    if not career_target:
+        career_target = get_user_career_target(user_email)
 
     if not isinstance(raw_skills, list):
         return jsonify({"error": "skills must be a list"}), 400
@@ -1624,6 +1944,7 @@ def live_jobs():
             where=where,
             page=page,
             results_per_page=results_per_page,
+            career_target=career_target,
         )
         results["db_mode"] = DB_MODE
         return jsonify(results), 200
@@ -1752,6 +2073,28 @@ def update_application_status():
     }), 200
 
 
+@app.route("/api/update-application-notes", methods=["POST"])
+@jwt_required()
+def update_application_notes():
+    user_email = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+
+    application_id = data.get("application_id")
+    notes = str(data.get("notes", "")).strip()
+
+    if not application_id:
+        return jsonify({"error": "application_id is required"}), 400
+
+    update_job_application_notes_for_user(user_email, int(application_id), notes)
+    applications = get_job_applications_by_user(user_email)
+
+    return jsonify({
+        "message": "Application notes updated",
+        "applications": applications,
+        "db_mode": DB_MODE,
+    }), 200
+
+
 @app.route("/api/profile-data", methods=["GET"])
 @jwt_required()
 def profile_data():
@@ -1764,11 +2107,25 @@ def profile_data():
     saved_jobs = get_saved_jobs_by_user(user_email)
     uploaded_cvs = get_uploaded_cvs_by_user(user_email)
     applications = get_job_applications_by_user(user_email)
+    career_target = get_user_career_target(user_email)
 
     profile_bits = build_profile_analytics(
         saved_jobs=saved_jobs,
         uploaded_cvs=uploaded_cvs,
         applications=applications,
+    )
+
+    latest_cv = get_latest_cv_data(user_email)
+    readiness = calculate_job_readiness(
+        skills=latest_cv.get("skills", []),
+        qualifications=latest_cv.get("qualifications", []),
+        saved_jobs=saved_jobs,
+        applications=applications,
+    )
+    cv_tips = generate_cv_improvement_tips(
+        skills=latest_cv.get("skills", []),
+        qualifications=latest_cv.get("qualifications", []),
+        text_preview=latest_cv.get("text_preview", ""),
     )
 
     return jsonify({
@@ -1783,6 +2140,9 @@ def profile_data():
         "all_extracted_skills": profile_bits["all_extracted_skills"],
         "all_extracted_qualifications": profile_bits["all_extracted_qualifications"],
         "analytics": profile_bits["analytics"],
+        "career_target": career_target,
+        "job_readiness": readiness,
+        "cv_tips": cv_tips,
         "db_mode": DB_MODE,
     }), 200
 
