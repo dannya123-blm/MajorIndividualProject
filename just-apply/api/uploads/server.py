@@ -65,13 +65,16 @@ CORS(
 
 jwt = JWTManager(app)
 
-swagger = Swagger(app, template={
-    "info": {
-        "title": "Just Apply API",
-        "description": "API for CV upload, NLP skill extraction, job matching, saved jobs, and authentication.",
-        "version": "2.3.0"
-    }
-})
+swagger = Swagger(
+    app,
+    template={
+        "info": {
+            "title": "Just Apply API",
+            "description": "API for CV upload, NLP skill extraction, job matching, saved jobs, profile analytics, and authentication.",
+            "version": "2.4.0",
+        }
+    },
+)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
@@ -211,6 +214,23 @@ def init_db():
         missing_qualifications NVARCHAR(MAX) NULL,
         raw_job_json NVARCHAR(MAX) NOT NULL,
         saved_at DATETIME DEFAULT GETDATE()
+    )
+    """)
+
+    cursor.execute("""
+    IF NOT EXISTS (
+        SELECT * FROM sysobjects WHERE name='user_cvs' AND xtype='U'
+    )
+    CREATE TABLE user_cvs (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        user_email NVARCHAR(255) NOT NULL,
+        original_name NVARCHAR(255) NOT NULL,
+        stored_filename NVARCHAR(255) NULL,
+        azure_blob_url NVARCHAR(MAX) NULL,
+        extracted_skills NVARCHAR(MAX) NULL,
+        extracted_qualifications NVARCHAR(MAX) NULL,
+        text_preview NVARCHAR(MAX) NULL,
+        uploaded_at DATETIME DEFAULT GETDATE()
     )
     """)
 
@@ -367,6 +387,75 @@ def remove_saved_job_for_user(user_email: str, job_id: str):
     conn.close()
 
 
+def save_cv_for_user(
+    user_email: str,
+    original_name: str,
+    stored_filename: str,
+    azure_blob_url: str | None,
+    skills: list[str],
+    qualifications: list[str],
+    text_preview: str,
+):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT INTO user_cvs (
+            user_email,
+            original_name,
+            stored_filename,
+            azure_blob_url,
+            extracted_skills,
+            extracted_qualifications,
+            text_preview
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user_email,
+        original_name,
+        stored_filename,
+        azure_blob_url or "",
+        json.dumps(skills or []),
+        json.dumps(qualifications or []),
+        text_preview or "",
+    ))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def get_uploaded_cvs_by_user(user_email: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT original_name, stored_filename, azure_blob_url,
+               extracted_skills, extracted_qualifications,
+               text_preview, uploaded_at
+        FROM user_cvs
+        WHERE user_email = ?
+        ORDER BY uploaded_at DESC
+    """, (user_email,))
+
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    cvs = []
+    for row in rows:
+        cvs.append({
+            "original_name": row[0],
+            "stored_filename": row[1],
+            "azure_blob_url": row[2],
+            "skills": json.loads(row[3]) if row[3] else [],
+            "qualifications": json.loads(row[4]) if row[4] else [],
+            "text_preview": row[5] or "",
+            "uploaded_at": str(row[6]) if row[6] else "",
+        })
+    return cvs
+
+
 def normalize_tokens(text: str) -> list[str]:
     tokens = word_tokenize(text)
     clean = []
@@ -454,6 +543,110 @@ def extract_text_generic(path: str) -> str:
         return ""
 
 
+def build_profile_analytics(saved_jobs: list, uploaded_cvs: list):
+    skill_counter = {}
+    qualification_counter = {}
+    missing_skill_counter = {}
+    role_counter = {}
+    industry_counter = {}
+
+    total_match_rate = 0
+    strong_matches = 0
+    good_matches = 0
+    weak_matches = 0
+
+    for cv in uploaded_cvs:
+        for skill in cv.get("skills", []):
+            key = str(skill).strip().lower()
+            if key:
+                skill_counter[key] = skill_counter.get(key, 0) + 1
+
+        for qual in cv.get("qualifications", []):
+            key = str(qual).strip().lower()
+            if key:
+                qualification_counter[key] = qualification_counter.get(key, 0) + 1
+
+    for job in saved_jobs:
+        match_percentage = int(job.get("match_percentage", 0) or 0)
+        total_match_rate += match_percentage
+
+        if match_percentage >= 80:
+            strong_matches += 1
+        elif match_percentage >= 50:
+            good_matches += 1
+        else:
+            weak_matches += 1
+
+        role_name = job.get("title") or job.get("job_title") or "Untitled role"
+        role_counter[role_name] = role_counter.get(role_name, 0) + 1
+
+        industry_name = job.get("industry") or ""
+        if industry_name:
+            industry_counter[industry_name] = industry_counter.get(industry_name, 0) + 1
+
+        for missing_skill in job.get("missing_skills", []):
+            key = str(missing_skill).strip().lower()
+            if key:
+                missing_skill_counter[key] = missing_skill_counter.get(key, 0) + 1
+
+    all_extracted_skills = [
+        skill for skill, _ in sorted(
+            skill_counter.items(),
+            key=lambda x: (-x[1], x[0])
+        )
+    ]
+
+    all_extracted_qualifications = [
+        qualification for qualification, _ in sorted(
+            qualification_counter.items(),
+            key=lambda x: (-x[1], x[0])
+        )
+    ]
+
+    top_missing_skills = [
+        {"skill": skill, "count": count}
+        for skill, count in sorted(
+            missing_skill_counter.items(),
+            key=lambda x: (-x[1], x[0])
+        )[:5]
+    ]
+
+    role_breakdown = [
+        {"name": name, "count": count}
+        for name, count in sorted(
+            role_counter.items(),
+            key=lambda x: (-x[1], x[0])
+        )[:5]
+    ]
+
+    best_fit_role = role_breakdown[0]["name"] if role_breakdown else ""
+    best_fit_industry = (
+        sorted(industry_counter.items(), key=lambda x: (-x[1], x[0]))[0][0]
+        if industry_counter else ""
+    )
+
+    average_match_rate = (
+        round(total_match_rate / len(saved_jobs)) if saved_jobs else 0
+    )
+
+    return {
+        "all_extracted_skills": all_extracted_skills,
+        "all_extracted_qualifications": all_extracted_qualifications,
+        "analytics": {
+            "average_match_rate": average_match_rate,
+            "saved_jobs_count": len(saved_jobs),
+            "uploaded_cv_count": len(uploaded_cvs),
+            "strong_matches": strong_matches,
+            "good_matches": good_matches,
+            "weak_matches": weak_matches,
+            "top_missing_skills": top_missing_skills,
+            "role_breakdown": role_breakdown,
+            "best_fit_role": best_fit_role,
+            "best_fit_industry": best_fit_industry,
+        },
+    }
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
@@ -487,8 +680,8 @@ def register():
         "user": {
             "id": user["id"],
             "name": user["name"],
-            "email": user["email"]
-        }
+            "email": user["email"],
+        },
     }), 201
 
 
@@ -518,8 +711,8 @@ def login():
         "user": {
             "id": user["id"],
             "name": user["name"],
-            "email": user["email"]
-        }
+            "email": user["email"],
+        },
     }), 200
 
 
@@ -536,7 +729,7 @@ def me():
         "user": {
             "id": user["id"],
             "name": user["name"],
-            "email": user["email"]
+            "email": user["email"],
         }
     }), 200
 
@@ -547,7 +740,10 @@ def logout():
 
 
 @app.route("/api/upload-cv", methods=["POST"])
+@jwt_required()
 def upload_and_parse_cv():
+    user_email = get_jwt_identity()
+
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -574,6 +770,16 @@ def upload_and_parse_cv():
     preview = text[:600] if text else ""
 
     blob_url = upload_cv_to_azure(save_path, filename)
+
+    save_cv_for_user(
+        user_email=user_email,
+        original_name=file.filename,
+        stored_filename=filename,
+        azure_blob_url=blob_url,
+        skills=skills,
+        qualifications=qualifications,
+        text_preview=preview,
+    )
 
     try:
         if os.path.exists(save_path):
@@ -730,12 +936,12 @@ def save_job():
     if not saved:
         return jsonify({
             "message": "Job already saved",
-            "saved_jobs": jobs
+            "saved_jobs": jobs,
         }), 200
 
     return jsonify({
         "message": "Job saved successfully",
-        "saved_jobs": jobs
+        "saved_jobs": jobs,
     }), 201
 
 
@@ -762,7 +968,34 @@ def remove_saved_job():
 
     return jsonify({
         "message": "Job removed",
-        "saved_jobs": jobs
+        "saved_jobs": jobs,
+    }), 200
+
+
+@app.route("/api/profile-data", methods=["GET"])
+@jwt_required()
+def profile_data():
+    user_email = get_jwt_identity()
+    user = get_user_by_email(user_email)
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    saved_jobs = get_saved_jobs_by_user(user_email)
+    uploaded_cvs = get_uploaded_cvs_by_user(user_email)
+    profile_bits = build_profile_analytics(saved_jobs, uploaded_cvs)
+
+    return jsonify({
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+        },
+        "saved_jobs": saved_jobs,
+        "uploaded_cvs": uploaded_cvs,
+        "all_extracted_skills": profile_bits["all_extracted_skills"],
+        "all_extracted_qualifications": profile_bits["all_extracted_qualifications"],
+        "analytics": profile_bits["analytics"],
     }), 200
 
 

@@ -11,11 +11,7 @@ const API_BASE_URL =
 const getAuthHeaders = () => {
   if (typeof window === "undefined") return {};
   const token = localStorage.getItem("access_token");
-  return token
-    ? {
-        Authorization: `Bearer ${token}`,
-      }
-    : {};
+  return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
 export default function HomePage() {
@@ -37,6 +33,10 @@ export default function HomePage() {
   const [locationFilter, setLocationFilter] = useState("All");
   const [loadingPage, setLoadingPage] = useState(true);
 
+  const [showGuideBubble, setShowGuideBubble] = useState(true);
+  const [showProfilePrompt, setShowProfilePrompt] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+
   const fetchCurrentUser = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/me`, {
@@ -54,10 +54,8 @@ export default function HomePage() {
       const data = await res.json();
       setCurrentUser(data.user);
     } catch (err) {
-      console.error("fetchCurrentUser error:", err);
-      setStatus(
-        "Could not connect to backend. Make sure Flask is running on port 5000."
-      );
+      console.error(err);
+      setStatus("Could not connect to backend.");
     }
   };
 
@@ -74,7 +72,7 @@ export default function HomePage() {
       const data = await res.json();
       setSavedJobs(data.saved_jobs || []);
     } catch (err) {
-      console.error("fetchSavedJobs error:", err);
+      console.error(err);
     }
   };
 
@@ -139,6 +137,9 @@ export default function HomePage() {
     try {
       const res = await fetch(`${API_BASE_URL}/api/upload-cv`, {
         method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+        },
         body: formData,
       });
 
@@ -159,6 +160,7 @@ export default function HomePage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...getAuthHeaders(),
         },
         body: JSON.stringify({
           skills: data.skills || [],
@@ -170,7 +172,6 @@ export default function HomePage() {
       const matchData = await matchRes.json();
 
       if (!matchRes.ok) {
-        console.error("Job matching error:", matchData);
         setStatus("CV parsed, but job matching failed.");
         return;
       }
@@ -203,6 +204,7 @@ export default function HomePage() {
 
       setJobs(returnedJobs);
       setJobStats(matchData.metadata || null);
+      setShowProfilePrompt(true);
 
       if (matchData.metadata) {
         const { total_jobs_loaded, jobs_with_matches, top_n } =
@@ -217,10 +219,8 @@ export default function HomePage() {
         );
       }
     } catch (err) {
-      console.error("handleUpload error:", err);
-      setStatus(
-        "Error: could not connect to backend. Make sure Flask is running."
-      );
+      console.error(err);
+      setStatus("Error: could not connect to backend.");
     }
   };
 
@@ -242,24 +242,6 @@ export default function HomePage() {
     }
   };
 
-  const removeSavedJob = async (jobId) => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/remove-saved-job`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-        },
-        body: JSON.stringify({ job_id: jobId }),
-      });
-
-      const data = await res.json();
-      setSavedJobs(data.saved_jobs || []);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   const isJobSaved = (jobId) => {
     return savedJobs.some((job) => job.job_id === jobId);
   };
@@ -268,12 +250,6 @@ export default function HomePage() {
     if (score >= 80) return "Strong Match";
     if (score >= 50) return "Good Match";
     return "Needs Improvement";
-  };
-
-  const getReadinessLabel = (score) => {
-    if (score >= 80) return "Ready to apply";
-    if (score >= 50) return "Almost ready";
-    return "Needs improvement";
   };
 
   const industries = useMemo(() => {
@@ -356,29 +332,9 @@ export default function HomePage() {
 
     return Object.entries(counts)
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 5)
+      .slice(0, 3)
       .map(([skill, count]) => ({ skill, count }));
   }, [filteredJobs]);
-
-  const bestRole = filteredJobs[0]?.title || filteredJobs[0]?.job_title || "N/A";
-  const bestIndustry =
-    filteredJobs[0]?.industry ||
-    (filteredJobs.find((job) => job.industry)?.industry ?? "Not enough data");
-
-  const profileStrength =
-    skills.length >= 6
-      ? "Your CV shows a strong technical profile."
-      : skills.length >= 3
-      ? "Your CV shows a developing technical profile."
-      : "Your CV currently shows a limited technical profile.";
-
-  const profileNextStep =
-    topMissingSkills.length > 0
-      ? `Focus next on ${topMissingSkills
-          .slice(0, 3)
-          .map((item) => item.skill)
-          .join(", ")}.`
-      : "Upload a CV to receive improvement suggestions.";
 
   const generateExplanation = (job) => {
     const matched = Array.isArray(job.matched_skills) ? job.matched_skills : [];
@@ -424,8 +380,9 @@ export default function HomePage() {
 
         <nav className="sidebar-nav">
           <button className="nav-link active">Dashboard</button>
-          <button className="nav-link">Saved Jobs</button>
-          <button className="nav-link">Profile</button>
+          <button className="nav-link" onClick={() => router.push("/profile")}>
+            Profile
+          </button>
           <button className="nav-link" onClick={handleLogout}>
             Sign Out
           </button>
@@ -447,11 +404,29 @@ export default function HomePage() {
 
           <nav className="topnav">
             <button className="topnav-item active">Dashboard</button>
-            <button className="topnav-item">Saved Jobs</button>
-            <button className="topnav-item">Profile</button>
-            <button className="topnav-item" onClick={handleLogout}>
-              Sign Out
+            <button
+              className="topnav-item"
+              onClick={() => router.push("/profile")}
+            >
+              Saved Jobs
             </button>
+
+            <div
+              className="profile-nav-wrapper"
+              onMouseEnter={() => setShowProfileMenu(true)}
+              onMouseLeave={() => setShowProfileMenu(false)}
+            >
+              <button className="topnav-item">Profile</button>
+
+              {showProfileMenu && (
+                <div className="profile-dropdown">
+                  <button onClick={() => router.push("/profile")}>
+                    Go to Profile
+                  </button>
+                  <button onClick={handleLogout}>Sign Out</button>
+                </div>
+              )}
+            </div>
           </nav>
 
           <div className="user">
@@ -465,45 +440,67 @@ export default function HomePage() {
             <p className="eyebrow">AI-powered job discovery</p>
             <h1 className="page-title">Stop searching for jobs. Let jobs find you.</h1>
             <p className="page-subtitle">
-              Just Apply helps people who struggle to find the right jobs by
-              turning a CV into personalised job matches, clear explanations,
-              and skill-improvement guidance.
+              Upload your CV, get personalised job matches, understand why they
+              fit, and improve your chances with smart skill guidance.
             </p>
+          </div>
+        </section>
 
-            <div className="chips" style={{ marginTop: "16px" }}>
-              <span className="chip chip-orange">Upload CV</span>
-              <span className="chip chip-orange">Get Matched Jobs</span>
-              <span className="chip chip-blue">See Skill Gaps</span>
-              <span className="chip chip-blue">Improve Employability</span>
+        {showGuideBubble && (
+          <div className="guide-bubble">
+            <button
+              className="guide-close"
+              onClick={() => setShowGuideBubble(false)}
+            >
+              ×
+            </button>
+            <p className="guide-kicker">Quick guide</p>
+            <h4>How to use Just Apply</h4>
+            <ul className="guide-list">
+              <li>Upload your CV</li>
+              <li>Review your recommended jobs</li>
+              <li>Check your missing skills</li>
+              <li>Open Profile for saved jobs and analytics</li>
+            </ul>
+            <button
+              className="btn-primary"
+              onClick={() => router.push("/profile")}
+            >
+              Take me there
+            </button>
+          </div>
+        )}
+
+        {showProfilePrompt && (
+          <div className="profile-prompt">
+            <button
+              className="guide-close"
+              onClick={() => setShowProfilePrompt(false)}
+            >
+              ×
+            </button>
+            <p className="guide-kicker">New insight available</p>
+            <h4>Your full profile is ready</h4>
+            <p className="insight-text">
+              View your saved jobs, uploaded CV history, extracted skills, and
+              personal analytics on your profile page.
+            </p>
+            <div className="prompt-actions">
+              <button
+                className="btn-primary"
+                onClick={() => router.push("/profile")}
+              >
+                Take me there
+              </button>
+              <button
+                className="btn-secondary-inline"
+                onClick={() => setShowProfilePrompt(false)}
+              >
+                Close
+              </button>
             </div>
           </div>
-        </section>
-
-        <section className="stats-row">
-          <div className="stat-card">
-            <div className="stat-icon">📄</div>
-            <div className="stat-label">Step 1</div>
-            <div className="stat-value">Upload CV</div>
-          </div>
-
-          <div className="stat-card">
-            <div className="stat-icon">🧠</div>
-            <div className="stat-label">Step 2</div>
-            <div className="stat-value">Extract Skills</div>
-          </div>
-
-          <div className="stat-card">
-            <div className="stat-icon">🎯</div>
-            <div className="stat-label">Step 3</div>
-            <div className="stat-value">Match Jobs</div>
-          </div>
-
-          <div className="stat-card highlight">
-            <div className="stat-icon">🚀</div>
-            <div className="stat-label">Step 4</div>
-            <div className="stat-value">Improve & Apply</div>
-          </div>
-        </section>
+        )}
 
         <section className="stats-row">
           <div className="stat-card">
@@ -519,9 +516,9 @@ export default function HomePage() {
           </div>
 
           <div className="stat-card">
-            <div className="stat-icon">✅</div>
-            <div className="stat-label">Interviews</div>
-            <div className="stat-value">0</div>
+            <div className="stat-icon">📄</div>
+            <div className="stat-label">CV Skills Found</div>
+            <div className="stat-value">{skills.length}</div>
           </div>
 
           <div className="stat-card highlight">
@@ -626,108 +623,18 @@ export default function HomePage() {
           </div>
         </section>
 
-        {(skills.length > 0 || qualifications.length > 0) && (
-          <section className="insights-section">
-            <div className="jobs-card">
-              <div className="jobs-header">
-                <div>
-                  <p className="section-kicker">Your profile</p>
-                  <h4>Profile Summary</h4>
-                </div>
-              </div>
-
-              <div className="stats-row">
-                <div className="stat-card">
-                  <div className="stat-label">Skills detected</div>
-                  <div className="stat-value">{skills.length}</div>
-                </div>
-
-                <div className="stat-card">
-                  <div className="stat-label">Qualifications detected</div>
-                  <div className="stat-value">{qualifications.length}</div>
-                </div>
-
-                <div className="stat-card">
-                  <div className="stat-label">Best-fit role</div>
-                  <div className="stat-value" style={{ fontSize: "20px" }}>
-                    {bestRole}
-                  </div>
-                </div>
-
-                <div className="stat-card highlight">
-                  <div className="stat-label">Best-fit industry</div>
-                  <div className="stat-value" style={{ fontSize: "20px" }}>
-                    {bestIndustry}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ marginTop: "16px" }}>
-                <p className="insight-text">{profileStrength}</p>
-                <p className="insight-text">
-                  <strong>Recommended next step:</strong> {profileNextStep}
-                </p>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {savedJobs.length > 0 && (
-          <section className="jobs-section">
-            <div className="jobs-card">
-              <div className="jobs-header">
-                <div>
-                  <p className="section-kicker">Bookmarks</p>
-                  <h4>Saved Jobs ({savedJobs.length})</h4>
-                </div>
-              </div>
-
-              <div className="jobs-list">
-                {savedJobs.map((job, idx) => (
-                  <div className="job-item" key={idx}>
-                    <div className="job-top">
-                      <div>
-                        <div className="job-title">
-                          {job.title || job.job_title || "Untitled role"}
-                        </div>
-
-                        <div className="job-meta">
-                          {job.company && <span>{job.company}</span>}
-                          {job.location && <span> • {job.location}</span>}
-                          {job.industry && <span> • {job.industry}</span>}
-                        </div>
-                      </div>
-
-                      <div className="match-badge">Saved</div>
-                    </div>
-
-                    <div className="job-score-row">
-                      <button
-                        className="btn-primary"
-                        onClick={() => removeSavedJob(job.job_id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-
         {topMissingSkills.length > 0 && (
           <section className="insights-section">
             <div className="insights-card">
               <div className="section-head compact">
                 <div>
-                  <p className="section-kicker">Insights</p>
-                  <h4>What You Should Learn Next</h4>
+                  <p className="section-kicker">Quick insight</p>
+                  <h4>Improve your chances</h4>
                 </div>
               </div>
 
               <p className="insight-text">
-                To improve your chances of getting hired, focus on these skills:
+                Focus on these missing skills to increase your match quality:
               </p>
 
               <div className="chips">
@@ -737,29 +644,6 @@ export default function HomePage() {
                   </span>
                 ))}
               </div>
-
-              <p className="insight-text" style={{ marginTop: "12px" }}>
-                Learning these could improve your job match rate significantly.
-              </p>
-            </div>
-          </section>
-        )}
-
-        {jobs.length === 0 && (skills.length > 0 || qualifications.length > 0) && (
-          <section className="insights-section">
-            <div className="insights-card">
-              <div className="section-head compact">
-                <div>
-                  <p className="section-kicker">Guidance</p>
-                  <h4>No strong matches found yet</h4>
-                </div>
-              </div>
-
-              <p className="insight-text">
-                Your CV may be missing some key industry skills. Build stronger
-                skills in areas like Python, SQL, cloud tools, and data analysis
-                to improve your employability.
-              </p>
             </div>
           </section>
         )}
@@ -847,9 +731,7 @@ export default function HomePage() {
 
                     <div className="job-score-row">
                       {typeof job.total_score !== "undefined" && (
-                        <div className="job-score">
-                          Score {job.total_score}
-                        </div>
+                        <div className="job-score">Score {job.total_score}</div>
                       )}
 
                       {typeof job.skill_score !== "undefined" && (
@@ -863,10 +745,6 @@ export default function HomePage() {
                           Qualifications {job.qual_score}
                         </div>
                       )}
-
-                      <div className="job-score muted">
-                        {getReadinessLabel(job.match_percentage || 0)}
-                      </div>
 
                       <button
                         className="btn-primary"
@@ -886,9 +764,7 @@ export default function HomePage() {
 
                     <div className="job-tags-block">
                       <div className="job-tags-title">Why this job matches</div>
-                      <p className="insight-text" style={{ marginBottom: 0 }}>
-                        {generateExplanation(job)}
-                      </p>
+                      <p className="insight-text">{generateExplanation(job)}</p>
                     </div>
 
                     {Array.isArray(job.matched_skills) &&
@@ -912,7 +788,7 @@ export default function HomePage() {
                       job.missing_skills.length > 0 && (
                         <div className="job-tags-block">
                           <div className="job-tags-title">
-                            Skills to improve before applying
+                            Skills to improve
                           </div>
                           <div className="chips">
                             {job.missing_skills.map((skill, skillIdx) => (
