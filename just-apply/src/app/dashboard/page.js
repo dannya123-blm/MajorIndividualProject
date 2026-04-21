@@ -3,8 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import justwork from "../images/justwork.png";
 
-export default function DashboardPage() {
+const API_BASE_URL = "http://192.168.1.139:5000";
+
+const getAuthHeaders = () => {
+  const token = localStorage.getItem("access_token");
+  return token
+    ? {
+        Authorization: `Bearer ${token}`,
+      }
+    : {};
+};
+
+export default function HomePage() {
   const router = useRouter();
 
   const [currentUser, setCurrentUser] = useState(null);
@@ -24,8 +36,10 @@ export default function DashboardPage() {
 
   const fetchCurrentUser = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/me", {
-        credentials: "include",
+      const res = await fetch(`${API_BASE_URL}/api/me`, {
+        headers: {
+          ...getAuthHeaders(),
+        },
       });
 
       if (!res.ok) {
@@ -43,9 +57,14 @@ export default function DashboardPage() {
 
   const fetchSavedJobs = async () => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/saved-jobs", {
-        credentials: "include",
+      const res = await fetch(`${API_BASE_URL}/api/saved-jobs`, {
+        headers: {
+          ...getAuthHeaders(),
+        },
       });
+
+      if (!res.ok) return;
+
       const data = await res.json();
       setSavedJobs(data.saved_jobs || []);
     } catch (err) {
@@ -54,19 +73,25 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+
     fetchCurrentUser();
     fetchSavedJobs();
   }, []);
 
   const handleLogout = async () => {
     try {
-      await fetch("http://127.0.0.1:5000/api/logout", {
+      await fetch(`${API_BASE_URL}/api/logout`, {
         method: "POST",
-        credentials: "include",
       });
     } catch (err) {
       console.error(err);
     } finally {
+      localStorage.removeItem("access_token");
       router.push("/login");
     }
   };
@@ -101,9 +126,8 @@ export default function DashboardPage() {
     setStatus("Uploading & parsing CV...");
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/upload-cv", {
+      const res = await fetch(`${API_BASE_URL}/api/upload-cv`, {
         method: "POST",
-        credentials: "include",
         body: formData,
       });
 
@@ -120,10 +144,11 @@ export default function DashboardPage() {
       setAzureBlobUrl(data.azure_blob_url || "");
       setStatus("CV parsed. Finding matching jobs...");
 
-      const matchRes = await fetch("http://127.0.0.1:5000/api/match-jobs", {
+      const matchRes = await fetch(`${API_BASE_URL}/api/match-jobs`, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           skills: data.skills || [],
           qualifications: data.qualifications || [],
@@ -147,6 +172,7 @@ export default function DashboardPage() {
           ? job.missing_skills.length
           : 0;
         const totalRelevantSkills = matchedCount + missingCount;
+
         const matchPercentage =
           totalRelevantSkills > 0
             ? Math.round((matchedCount / totalRelevantSkills) * 100)
@@ -187,10 +213,12 @@ export default function DashboardPage() {
 
   const saveJob = async (job) => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/save-job", {
+      const res = await fetch(`${API_BASE_URL}/api/save-job`, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify({ job }),
       });
 
@@ -203,10 +231,12 @@ export default function DashboardPage() {
 
   const removeSavedJob = async (jobId) => {
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/remove-saved-job", {
+      const res = await fetch(`${API_BASE_URL}/api/remove-saved-job`, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
         body: JSON.stringify({ job_id: jobId }),
       });
 
@@ -219,6 +249,18 @@ export default function DashboardPage() {
 
   const isJobSaved = (jobId) => {
     return savedJobs.some((job) => job.job_id === jobId);
+  };
+
+  const getMatchLabel = (score) => {
+    if (score >= 80) return "Strong Match";
+    if (score >= 50) return "Good Match";
+    return "Needs Improvement";
+  };
+
+  const getReadinessLabel = (score) => {
+    if (score >= 80) return "Ready to apply";
+    if (score >= 50) return "Almost ready";
+    return "Needs improvement";
   };
 
   const industries = useMemo(() => {
@@ -302,8 +344,53 @@ export default function DashboardPage() {
     return Object.entries(counts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
-      .map(([skill]) => skill);
+      .map(([skill, count]) => ({ skill, count }));
   }, [filteredJobs]);
+
+  const bestRole = filteredJobs[0]?.title || filteredJobs[0]?.job_title || "N/A";
+  const bestIndustry =
+    filteredJobs[0]?.industry ||
+    (filteredJobs.find((job) => job.industry)?.industry ?? "Not enough data");
+
+  const profileStrength =
+    skills.length >= 6
+      ? "Your CV shows a strong technical profile."
+      : skills.length >= 3
+      ? "Your CV shows a developing technical profile."
+      : "Your CV currently shows a limited technical profile.";
+
+  const profileNextStep =
+    topMissingSkills.length > 0
+      ? `Focus next on ${topMissingSkills
+          .slice(0, 3)
+          .map((item) => item.skill)
+          .join(", ")}.`
+      : "Upload a CV to receive improvement suggestions.";
+
+  const generateExplanation = (job) => {
+    const matched = Array.isArray(job.matched_skills) ? job.matched_skills : [];
+    const missing = Array.isArray(job.missing_skills) ? job.missing_skills : [];
+
+    if (matched.length === 0 && missing.length === 0) {
+      return "This role has limited matching detail available.";
+    }
+
+    if (matched.length > 0 && missing.length === 0) {
+      return `You already match the main visible skills for this role, including ${matched
+        .slice(0, 3)
+        .join(", ")}.`;
+    }
+
+    if (matched.length > 0) {
+      return `You match ${matched.length} key skill${
+        matched.length > 1 ? "s" : ""
+      }, including ${matched.slice(0, 3).join(", ")}, but you still need ${missing.length} more.`;
+    }
+
+    return `This role highlights skills you may still need to build, such as ${missing
+      .slice(0, 3)
+      .join(", ")}.`;
+  };
 
   if (!currentUser) {
     return null;
@@ -322,7 +409,9 @@ export default function DashboardPage() {
           <button className="nav-link active">Dashboard</button>
           <button className="nav-link">Saved Jobs</button>
           <button className="nav-link">Profile</button>
-          <button className="nav-link" onClick={handleLogout}>Sign Out</button>
+          <button className="nav-link" onClick={handleLogout}>
+            Sign Out
+          </button>
         </nav>
       </aside>
 
@@ -343,7 +432,9 @@ export default function DashboardPage() {
             <button className="topnav-item active">Dashboard</button>
             <button className="topnav-item">Saved Jobs</button>
             <button className="topnav-item">Profile</button>
-            <button className="topnav-item" onClick={handleLogout}>Sign Out</button>
+            <button className="topnav-item" onClick={handleLogout}>
+              Sign Out
+            </button>
           </nav>
 
           <div className="user">
@@ -354,12 +445,46 @@ export default function DashboardPage() {
 
         <section className="hero-row">
           <div>
-            <p className="eyebrow">AI-powered job matching</p>
-            <h1 className="page-title">Find clearer, smarter job matches</h1>
+            <p className="eyebrow">AI-powered job discovery</p>
+            <h1 className="page-title">Stop searching for jobs. Let jobs find you.</h1>
             <p className="page-subtitle">
-              Upload a CV, extract skills, and compare against job listings with
-              visible match scores, saved jobs, and skill-gap analysis.
+              Just Apply helps people who struggle to find the right jobs by
+              turning a CV into personalised job matches, clear explanations,
+              and skill-improvement guidance.
             </p>
+
+            <div className="chips" style={{ marginTop: "16px" }}>
+              <span className="chip chip-orange">Upload CV</span>
+              <span className="chip chip-orange">Get Matched Jobs</span>
+              <span className="chip chip-blue">See Skill Gaps</span>
+              <span className="chip chip-blue">Improve Employability</span>
+            </div>
+          </div>
+        </section>
+
+        <section className="stats-row">
+          <div className="stat-card">
+            <div className="stat-icon">📄</div>
+            <div className="stat-label">Step 1</div>
+            <div className="stat-value">Upload CV</div>
+          </div>
+
+          <div className="stat-card">
+            <div className="stat-icon">🧠</div>
+            <div className="stat-label">Step 2</div>
+            <div className="stat-value">Extract Skills</div>
+          </div>
+
+          <div className="stat-card">
+            <div className="stat-icon">🎯</div>
+            <div className="stat-label">Step 3</div>
+            <div className="stat-value">Match Jobs</div>
+          </div>
+
+          <div className="stat-card highlight">
+            <div className="stat-icon">🚀</div>
+            <div className="stat-label">Step 4</div>
+            <div className="stat-value">Improve & Apply</div>
           </div>
         </section>
 
@@ -384,7 +509,7 @@ export default function DashboardPage() {
 
           <div className="stat-card highlight">
             <div className="stat-icon">📈</div>
-            <div className="stat-label">Match Rate</div>
+            <div className="stat-label">Average Match Rate</div>
             <div className="stat-value">{averageMatchRate}%</div>
           </div>
         </section>
@@ -484,6 +609,52 @@ export default function DashboardPage() {
           </div>
         </section>
 
+        {(skills.length > 0 || qualifications.length > 0) && (
+          <section className="insights-section">
+            <div className="jobs-card">
+              <div className="jobs-header">
+                <div>
+                  <p className="section-kicker">Your profile</p>
+                  <h4>Profile Summary</h4>
+                </div>
+              </div>
+
+              <div className="stats-row">
+                <div className="stat-card">
+                  <div className="stat-label">Skills detected</div>
+                  <div className="stat-value">{skills.length}</div>
+                </div>
+
+                <div className="stat-card">
+                  <div className="stat-label">Qualifications detected</div>
+                  <div className="stat-value">{qualifications.length}</div>
+                </div>
+
+                <div className="stat-card">
+                  <div className="stat-label">Best-fit role</div>
+                  <div className="stat-value" style={{ fontSize: "20px" }}>
+                    {bestRole}
+                  </div>
+                </div>
+
+                <div className="stat-card highlight">
+                  <div className="stat-label">Best-fit industry</div>
+                  <div className="stat-value" style={{ fontSize: "20px" }}>
+                    {bestIndustry}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: "16px" }}>
+                <p className="insight-text">{profileStrength}</p>
+                <p className="insight-text">
+                  <strong>Recommended next step:</strong> {profileNextStep}
+                </p>
+              </div>
+            </div>
+          </section>
+        )}
+
         {savedJobs.length > 0 && (
           <section className="jobs-section">
             <div className="jobs-card">
@@ -534,21 +705,44 @@ export default function DashboardPage() {
               <div className="section-head compact">
                 <div>
                   <p className="section-kicker">Insights</p>
-                  <h4>Skill Gap Insights</h4>
+                  <h4>What You Should Learn Next</h4>
                 </div>
               </div>
 
               <p className="insight-text">
-                Most common missing skills across recommended jobs:
+                To improve your chances of getting hired, focus on these skills:
               </p>
 
               <div className="chips">
-                {topMissingSkills.map((skill, i) => (
+                {topMissingSkills.map((item, i) => (
                   <span key={i} className="chip chip-blue">
-                    {skill}
+                    {item.skill} ({item.count})
                   </span>
                 ))}
               </div>
+
+              <p className="insight-text" style={{ marginTop: "12px" }}>
+                Learning these could improve your job match rate significantly.
+              </p>
+            </div>
+          </section>
+        )}
+
+        {jobs.length === 0 && (skills.length > 0 || qualifications.length > 0) && (
+          <section className="insights-section">
+            <div className="insights-card">
+              <div className="section-head compact">
+                <div>
+                  <p className="section-kicker">Guidance</p>
+                  <h4>No strong matches found yet</h4>
+                </div>
+              </div>
+
+              <p className="insight-text">
+                Your CV may be missing some key industry skills. Build stronger
+                skills in areas like Python, SQL, cloud tools, and data analysis
+                to improve your employability.
+              </p>
             </div>
           </section>
         )}
@@ -629,7 +823,8 @@ export default function DashboardPage() {
                       </div>
 
                       <div className="match-badge">
-                        {job.match_percentage || 0}% Match
+                        {getMatchLabel(job.match_percentage || 0)} •{" "}
+                        {job.match_percentage || 0}%
                       </div>
                     </div>
 
@@ -652,6 +847,10 @@ export default function DashboardPage() {
                         </div>
                       )}
 
+                      <div className="job-score muted">
+                        {getReadinessLabel(job.match_percentage || 0)}
+                      </div>
+
                       <button
                         className="btn-primary"
                         onClick={() => saveJob(job)}
@@ -666,6 +865,13 @@ export default function DashboardPage() {
                         className="progress-bar"
                         style={{ width: `${job.match_percentage || 0}%` }}
                       />
+                    </div>
+
+                    <div className="job-tags-block">
+                      <div className="job-tags-title">Why this job matches</div>
+                      <p className="insight-text" style={{ marginBottom: 0 }}>
+                        {generateExplanation(job)}
+                      </p>
                     </div>
 
                     {Array.isArray(job.matched_skills) &&
@@ -688,7 +894,9 @@ export default function DashboardPage() {
                     {Array.isArray(job.missing_skills) &&
                       job.missing_skills.length > 0 && (
                         <div className="job-tags-block">
-                          <div className="job-tags-title">Missing skills</div>
+                          <div className="job-tags-title">
+                            Skills to improve before applying
+                          </div>
                           <div className="chips">
                             {job.missing_skills.map((skill, skillIdx) => (
                               <span
