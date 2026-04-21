@@ -150,11 +150,9 @@ def get_sql_driver():
     if "ODBC Driver 17 for SQL Server" in available:
         return "ODBC Driver 17 for SQL Server"
 
-    if "SQL Server" in available:
-        return "SQL Server"
-
     raise RuntimeError(
-        "No SQL Server ODBC driver found. Install Microsoft ODBC Driver 18 or 17 for SQL Server."
+        "No supported SQL Server ODBC driver found. "
+        "Install Microsoft ODBC Driver 18 or 17 for SQL Server."
     )
 
 
@@ -163,13 +161,13 @@ def get_db_connection():
 
     conn_str = (
         f"DRIVER={{{driver}}};"
-        f"SERVER=tcp:{AZURE_SQL_SERVER},1433;"
+        f"SERVER={AZURE_SQL_SERVER};"
         f"DATABASE={AZURE_SQL_DATABASE};"
         f"UID={AZURE_SQL_USERNAME};"
         f"PWD={AZURE_SQL_PASSWORD};"
         "Encrypt=yes;"
-        "TrustServerCertificate=yes;"
-        "Timeout=30;"
+        "TrustServerCertificate=no;"
+        "Connection Timeout=30;"
     )
 
     return pyodbc.connect(conn_str)
