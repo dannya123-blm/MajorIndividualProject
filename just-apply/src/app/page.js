@@ -19,27 +19,38 @@ export default function HomePage() {
 
   const [currentUser, setCurrentUser] = useState(null);
   const [dbMode, setDbMode] = useState("unknown");
+
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState("");
   const [status, setStatus] = useState("");
+
   const [skills, setSkills] = useState([]);
   const [qualifications, setQualifications] = useState([]);
   const [preview, setPreview] = useState("");
   const [azureBlobUrl, setAzureBlobUrl] = useState("");
+
   const [jobs, setJobs] = useState([]);
   const [jobStats, setJobStats] = useState(null);
   const [savedJobs, setSavedJobs] = useState([]);
   const [applications, setApplications] = useState([]);
+
   const [careerTarget, setCareerTarget] = useState("");
   const [jobReadiness, setJobReadiness] = useState(null);
   const [cvTips, setCvTips] = useState([]);
+  const [emailPreferences, setEmailPreferences] = useState({
+    alerts_enabled: true,
+    frequency: "daily",
+    preferred_location: "",
+    jobs_per_email: 5,
+  });
+
   const [compareJobs, setCompareJobs] = useState([]);
 
   const [sortBy, setSortBy] = useState("match_percentage");
   const [industryFilter, setIndustryFilter] = useState("All");
   const [locationFilter, setLocationFilter] = useState("All");
-  const [loadingPage, setLoadingPage] = useState(true);
 
+  const [loadingPage, setLoadingPage] = useState(true);
   const [showGuideBubble, setShowGuideBubble] = useState(true);
   const [showProfilePrompt, setShowProfilePrompt] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -48,6 +59,9 @@ export default function HomePage() {
   const [openJobId, setOpenJobId] = useState(null);
   const [compactMode, setCompactMode] = useState(false);
   const [highContrast, setHighContrast] = useState(false);
+
+  const [savingPreferences, setSavingPreferences] = useState(false);
+  const [sendingTestEmail, setSendingTestEmail] = useState(false);
 
   const fetchCurrentUser = async () => {
     try {
@@ -114,6 +128,37 @@ export default function HomePage() {
       setCareerTarget(data.career_target || "");
       setJobReadiness(data.job_readiness || null);
       setCvTips(data.cv_tips || []);
+      setEmailPreferences(
+        data.email_preferences || {
+          alerts_enabled: true,
+          frequency: "daily",
+          preferred_location: "",
+          jobs_per_email: 5,
+        }
+      );
+      if (data.db_mode) setDbMode(data.db_mode);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchEmailPreferences = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/email-preferences`, {
+        headers: { ...getAuthHeaders() },
+      });
+
+      if (!res.ok) return;
+
+      const data = await res.json();
+      setEmailPreferences(
+        data.preferences || {
+          alerts_enabled: true,
+          frequency: "daily",
+          preferred_location: "",
+          jobs_per_email: 5,
+        }
+      );
       if (data.db_mode) setDbMode(data.db_mode);
     } catch (err) {
       console.error(err);
@@ -133,6 +178,7 @@ export default function HomePage() {
         fetchSavedJobs(),
         fetchApplications(),
         fetchProfileData(),
+        fetchEmailPreferences(),
       ]);
 
       setLoadingPage(false);
@@ -203,7 +249,7 @@ export default function HomePage() {
       setAzureBlobUrl(data.azure_blob_url || "");
       if (data.db_mode) setDbMode(data.db_mode);
 
-      setStatus("CV parsed. Searching live jobs in the US...");
+      setStatus("CV parsed. Searching live jobs...");
 
       const liveRes = await fetch(`${API_BASE_URL}/api/live-jobs`, {
         method: "POST",
@@ -214,9 +260,10 @@ export default function HomePage() {
         body: JSON.stringify({
           skills: data.skills || [],
           qualifications: data.qualifications || [],
-          where: "",
+          where: emailPreferences.preferred_location || "",
           page: 1,
           results_per_page: 20,
+          career_target: careerTarget || "",
         }),
       });
 
@@ -251,7 +298,7 @@ export default function HomePage() {
       await fetchProfileData();
 
       setStatus(
-        `CV parsed successfully. Loaded ${returnedJobs.length} live US jobs from ${liveData.metadata?.source || "Adzuna"}.`
+        `CV parsed successfully. Loaded ${returnedJobs.length} live jobs from ${liveData.metadata?.source || "Adzuna"}.`
       );
     } catch (err) {
       console.error(err);
@@ -326,8 +373,76 @@ export default function HomePage() {
 
       setCareerTarget(data.career_target || "");
       if (data.db_mode) setDbMode(data.db_mode);
+      await fetchProfileData();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const saveEmailPreferences = async () => {
+    try {
+      setSavingPreferences(true);
+
+      const res = await fetch(`${API_BASE_URL}/api/email-preferences`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          alerts_enabled: emailPreferences.alerts_enabled,
+          frequency: emailPreferences.frequency,
+          preferred_location: emailPreferences.preferred_location,
+          jobs_per_email: Number(emailPreferences.jobs_per_email),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Could not save email preferences.");
+        return;
+      }
+
+      setEmailPreferences(data.preferences || emailPreferences);
+      if (data.db_mode) setDbMode(data.db_mode);
+      alert("Email preferences updated.");
+    } catch (err) {
+      console.error(err);
+      alert("Could not connect to backend.");
+    } finally {
+      setSavingPreferences(false);
+    }
+  };
+
+  const sendTestJobAlert = async () => {
+    try {
+      setSendingTestEmail(true);
+
+      const res = await fetch(`${API_BASE_URL}/api/test-send-job-alert`, {
+        method: "POST",
+        headers: { ...getAuthHeaders() },
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Could not send job alert email.");
+        return;
+      }
+
+      if (data.db_mode) setDbMode(data.db_mode);
+      const result = data.result || {};
+      if (result.sent) {
+        alert(`Test email sent successfully with ${result.jobs_sent || 0} job(s).`);
+      } else {
+        alert(`Email not sent: ${result.reason || "No new jobs found."}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Could not connect to backend.");
+    } finally {
+      setSendingTestEmail(false);
     }
   };
 
@@ -697,11 +812,11 @@ export default function HomePage() {
 
         <section className="hero-row">
           <div>
-            <p className="eyebrow">AI-powered live US job discovery</p>
+            <p className="eyebrow">AI-powered live job discovery</p>
             <h1 className="page-title">Stop searching for jobs. Let jobs find you.</h1>
             <p className="page-subtitle">
               Just Apply turns a CV into personalised job matches, clear fit explanations,
-              skill-gap guidance, and application tracking in one place.
+              skill-gap guidance, application tracking, and automated email alerts.
             </p>
           </div>
         </section>
@@ -916,6 +1031,99 @@ export default function HomePage() {
                     </span>
                   ))}
                 </div>
+              </div>
+            </section>
+
+            <section className="jobs-section">
+              <div className="jobs-card">
+                <div className="jobs-header">
+                  <div>
+                    <p className="section-kicker">Automatic alerts</p>
+                    <h4>Email Job Alert Settings</h4>
+                  </div>
+                </div>
+
+                <div className="filter-controls">
+                  <div className="filter-group">
+                    <label>Alerts Enabled</label>
+                    <select
+                      value={emailPreferences.alerts_enabled ? "yes" : "no"}
+                      onChange={(e) =>
+                        setEmailPreferences((prev) => ({
+                          ...prev,
+                          alerts_enabled: e.target.value === "yes",
+                        }))
+                      }
+                    >
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </div>
+
+                  <div className="filter-group">
+                    <label>Frequency</label>
+                    <select
+                      value={emailPreferences.frequency || "daily"}
+                      onChange={(e) =>
+                        setEmailPreferences((prev) => ({
+                          ...prev,
+                          frequency: e.target.value,
+                        }))
+                      }
+                    >
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                    </select>
+                  </div>
+
+                  <div className="filter-group">
+                    <label>Jobs Per Email</label>
+                    <select
+                      value={emailPreferences.jobs_per_email || 5}
+                      onChange={(e) =>
+                        setEmailPreferences((prev) => ({
+                          ...prev,
+                          jobs_per_email: Number(e.target.value),
+                        }))
+                      }
+                    >
+                      <option value={3}>3</option>
+                      <option value={5}>5</option>
+                      <option value={7}>7</option>
+                      <option value={10}>10</option>
+                    </select>
+                  </div>
+
+                  <div className="filter-group filter-wide">
+                    <label>Preferred Location</label>
+                    <input
+                      className="career-target-select"
+                      type="text"
+                      value={emailPreferences.preferred_location || ""}
+                      onChange={(e) =>
+                        setEmailPreferences((prev) => ({
+                          ...prev,
+                          preferred_location: e.target.value,
+                        }))
+                      }
+                      placeholder="e.g. New York, Remote, California"
+                    />
+                  </div>
+                </div>
+
+                <div className="job-actions-footer">
+                  <button className="btn-primary" onClick={saveEmailPreferences} disabled={savingPreferences}>
+                    {savingPreferences ? "Saving..." : "Save Email Preferences"}
+                  </button>
+
+                  <button className="btn-primary btn-apply" onClick={sendTestJobAlert} disabled={sendingTestEmail}>
+                    {sendingTestEmail ? "Sending..." : "Send Test Job Alert"}
+                  </button>
+                </div>
+
+                <p className="insight-text" style={{ marginTop: "12px" }}>
+                  Your system can now email live job opportunities automatically based on your CV, career target, and activity.
+                </p>
               </div>
             </section>
 

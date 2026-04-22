@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+import smtplib
 from datetime import datetime, timedelta
 from typing import Optional, Any
 
@@ -29,6 +30,10 @@ from flask_jwt_extended import (
     jwt_required,
 )
 
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from apscheduler.schedulers.background import BackgroundScheduler
+
 # =========================================================
 # ENV
 # =========================================================
@@ -45,6 +50,12 @@ AZURE_SQL_PASSWORD = os.getenv("AZURE_SQL_PASSWORD")
 ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY")
 ADZUNA_COUNTRY = os.getenv("ADZUNA_COUNTRY", "us")
+
+EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
+EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
+EMAIL_ALERTS_ENABLED = os.getenv("EMAIL_ALERTS_ENABLED", "true").lower() == "true"
+EMAIL_ALERTS_HOUR = int(os.getenv("EMAIL_ALERTS_HOUR", "9"))
+EMAIL_ALERTS_MINUTE = int(os.getenv("EMAIL_ALERTS_MINUTE", "0"))
 
 # =========================================================
 # PATHS
@@ -106,8 +117,8 @@ swagger = Swagger(
     template={
         "info": {
             "title": "Just Apply API",
-            "description": "API for CV upload, NLP extraction, live Adzuna jobs, saved jobs, applications, profile analytics, and authentication.",
-            "version": "6.0.0",
+            "description": "API for CV upload, NLP extraction, live Adzuna jobs, saved jobs, applications, profile analytics, and automated email alerts.",
+            "version": "7.0.0",
         }
     },
 )
@@ -186,6 +197,9 @@ ALLOWED_CAREER_TARGETS = {
     "UI/UX Designer",
 }
 
+ALLOWED_APPLICATION_STATUSES = {"Applied", "Interviewing", "Rejected", "Offer"}
+ALERT_FREQUENCIES = {"daily", "weekly"}
+
 # =========================================================
 # DATABASE HELPERS
 # =========================================================
@@ -206,7 +220,6 @@ def get_sql_driver():
 
 def get_azure_connection():
     driver = get_sql_driver()
-
     server = f"tcp:{AZURE_SQL_SERVER},1433"
 
     conn_str = (
@@ -355,6 +368,36 @@ def init_azure_db():
     )
     """)
 
+    cursor.execute("""
+    IF NOT EXISTS (
+        SELECT * FROM sysobjects WHERE name='email_alert_preferences' AND xtype='U'
+    )
+    CREATE TABLE email_alert_preferences (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        user_email NVARCHAR(255) UNIQUE NOT NULL,
+        alerts_enabled BIT NOT NULL DEFAULT 1,
+        frequency NVARCHAR(50) NOT NULL DEFAULT 'daily',
+        preferred_location NVARCHAR(255) NULL,
+        jobs_per_email INT NOT NULL DEFAULT 5,
+        last_sent_at DATETIME NULL,
+        created_at DATETIME DEFAULT GETDATE(),
+        updated_at DATETIME DEFAULT GETDATE()
+    )
+    """)
+
+    cursor.execute("""
+    IF NOT EXISTS (
+        SELECT * FROM sysobjects WHERE name='emailed_jobs_history' AND xtype='U'
+    )
+    CREATE TABLE emailed_jobs_history (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        user_email NVARCHAR(255) NOT NULL,
+        external_job_id NVARCHAR(255) NOT NULL,
+        title NVARCHAR(255) NULL,
+        emailed_at DATETIME DEFAULT GETDATE()
+    )
+    """)
+
     conn.commit()
     cursor.close()
     conn.close()
@@ -435,6 +478,30 @@ def init_sqlite_db():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS email_alert_preferences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_email TEXT UNIQUE NOT NULL,
+        alerts_enabled INTEGER NOT NULL DEFAULT 1,
+        frequency TEXT NOT NULL DEFAULT 'daily',
+        preferred_location TEXT,
+        jobs_per_email INTEGER NOT NULL DEFAULT 5,
+        last_sent_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS emailed_jobs_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_email TEXT NOT NULL,
+        external_job_id TEXT NOT NULL,
+        title TEXT,
+        emailed_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     conn.commit()
     cursor.close()
     conn.close()
@@ -505,6 +572,7 @@ def create_user(name: str, email: str, password_hash: str) -> dict:
         conn.close()
 
         row = dict_from_row(row)
+        ensure_email_preferences_exist(email)
         return {
             "id": row["id"],
             "name": row["name"],
@@ -527,6 +595,7 @@ def create_user(name: str, email: str, password_hash: str) -> dict:
     cursor.close()
     conn.close()
 
+    ensure_email_preferences_exist(email)
     return {
         "id": row[0],
         "name": row[1],
@@ -1099,6 +1168,295 @@ def save_user_career_target(user_email: str, target_role: str):
             VALUES (?, ?)
         """, (user_email, target_role))
 
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+# =========================================================
+# EMAIL ALERT PREFERENCES / HISTORY
+# =========================================================
+def ensure_email_preferences_exist(user_email: str):
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id
+            FROM email_alert_preferences
+            WHERE user_email = ?
+        """, (user_email,))
+        existing = cursor.fetchone()
+
+        if not existing:
+            cursor.execute("""
+                INSERT INTO email_alert_preferences (
+                    user_email, alerts_enabled, frequency, preferred_location, jobs_per_email
+                )
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_email, 1, "daily", "", 5))
+            conn.commit()
+
+        cursor.close()
+        conn.close()
+        return
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id
+        FROM email_alert_preferences
+        WHERE user_email = ?
+    """, (user_email,))
+    existing = cursor.fetchone()
+
+    if not existing:
+        cursor.execute("""
+            INSERT INTO email_alert_preferences (
+                user_email, alerts_enabled, frequency, preferred_location, jobs_per_email
+            )
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_email, 1, "daily", "", 5))
+        conn.commit()
+
+    cursor.close()
+    conn.close()
+
+
+def get_email_preferences_by_user(user_email: str) -> dict:
+    ensure_email_preferences_exist(user_email)
+
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT user_email, alerts_enabled, frequency, preferred_location,
+                   jobs_per_email, last_sent_at
+            FROM email_alert_preferences
+            WHERE user_email = ?
+        """, (user_email,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row:
+            return {
+                "user_email": user_email,
+                "alerts_enabled": True,
+                "frequency": "daily",
+                "preferred_location": "",
+                "jobs_per_email": 5,
+                "last_sent_at": None,
+            }
+
+        row = dict_from_row(row)
+        return {
+            "user_email": row["user_email"],
+            "alerts_enabled": bool(row["alerts_enabled"]),
+            "frequency": row["frequency"] or "daily",
+            "preferred_location": row["preferred_location"] or "",
+            "jobs_per_email": int(row["jobs_per_email"] or 5),
+            "last_sent_at": row["last_sent_at"],
+        }
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT user_email, alerts_enabled, frequency, preferred_location,
+               jobs_per_email, last_sent_at
+        FROM email_alert_preferences
+        WHERE user_email = ?
+    """, (user_email,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not row:
+        return {
+            "user_email": user_email,
+            "alerts_enabled": True,
+            "frequency": "daily",
+            "preferred_location": "",
+            "jobs_per_email": 5,
+            "last_sent_at": None,
+        }
+
+    return {
+        "user_email": row[0],
+        "alerts_enabled": bool(row[1]),
+        "frequency": row[2] or "daily",
+        "preferred_location": row[3] or "",
+        "jobs_per_email": int(row[4] or 5),
+        "last_sent_at": str(row[5]) if row[5] else None,
+    }
+
+
+def update_email_preferences_for_user(
+    user_email: str,
+    alerts_enabled: bool,
+    frequency: str,
+    preferred_location: str,
+    jobs_per_email: int,
+):
+    ensure_email_preferences_exist(user_email)
+
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE email_alert_preferences
+            SET alerts_enabled = ?,
+                frequency = ?,
+                preferred_location = ?,
+                jobs_per_email = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_email = ?
+        """, (
+            1 if alerts_enabled else 0,
+            frequency,
+            preferred_location,
+            jobs_per_email,
+            user_email,
+        ))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE email_alert_preferences
+        SET alerts_enabled = ?,
+            frequency = ?,
+            preferred_location = ?,
+            jobs_per_email = ?,
+            updated_at = GETDATE()
+        WHERE user_email = ?
+    """, (
+        1 if alerts_enabled else 0,
+        frequency,
+        preferred_location,
+        jobs_per_email,
+        user_email,
+    ))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def update_email_last_sent_for_user(user_email: str):
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE email_alert_preferences
+            SET last_sent_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_email = ?
+        """, (user_email,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE email_alert_preferences
+        SET last_sent_at = GETDATE(),
+            updated_at = GETDATE()
+        WHERE user_email = ?
+    """, (user_email,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def get_all_alert_enabled_users() -> list[dict]:
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT u.email, u.name
+            FROM users u
+            INNER JOIN email_alert_preferences p
+                ON u.email = p.user_email
+            WHERE p.alerts_enabled = 1
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        users = []
+        for row in rows:
+            row = dict_from_row(row)
+            users.append({
+                "email": row["email"],
+                "name": row["name"],
+            })
+        return users
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT u.email, u.name
+        FROM users u
+        INNER JOIN email_alert_preferences p
+            ON u.email = p.user_email
+        WHERE p.alerts_enabled = 1
+    """)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    return [{"email": row[0], "name": row[1]} for row in rows]
+
+
+def has_job_been_emailed_to_user(user_email: str, external_job_id: str) -> bool:
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id
+            FROM emailed_jobs_history
+            WHERE user_email = ? AND external_job_id = ?
+        """, (user_email, external_job_id))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return row is not None
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id
+        FROM emailed_jobs_history
+        WHERE user_email = ? AND external_job_id = ?
+    """, (user_email, external_job_id))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return row is not None
+
+
+def record_emailed_job(user_email: str, external_job_id: str, title: str):
+    if db_is_sqlite():
+        conn = get_sqlite_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO emailed_jobs_history (user_email, external_job_id, title)
+            VALUES (?, ?, ?)
+        """, (user_email, external_job_id, title))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return
+
+    conn = get_azure_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO emailed_jobs_history (user_email, external_job_id, title)
+        VALUES (?, ?, ?)
+    """, (user_email, external_job_id, title))
     conn.commit()
     cursor.close()
     conn.close()
@@ -1678,6 +2036,216 @@ def build_profile_analytics(saved_jobs: list, uploaded_cvs: list, applications: 
     }
 
 # =========================================================
+# EMAIL HELPERS
+# =========================================================
+def can_send_email() -> bool:
+    return bool(EMAIL_ADDRESS and EMAIL_APP_PASSWORD and EMAIL_ALERTS_ENABLED)
+
+
+def send_email_html(to_email: str, subject: str, html_body: str, plain_body: str):
+    if not can_send_email():
+        raise RuntimeError("Email sender credentials are missing or email alerts are disabled.")
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_ADDRESS
+    msg["To"] = to_email
+
+    msg.attach(MIMEText(plain_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(EMAIL_ADDRESS, EMAIL_APP_PASSWORD)
+        server.sendmail(EMAIL_ADDRESS, to_email, msg.as_string())
+
+
+def build_email_digest_content(user_name: str, career_target: str, jobs: list[dict]):
+    target_text = career_target or "your profile"
+
+    plain_lines = [
+        f"Hi {user_name},",
+        "",
+        f"Here are new live jobs matched to {target_text}:",
+        "",
+    ]
+
+    html_items = []
+
+    for job in jobs:
+        title = job.get("title", "Untitled role")
+        company = job.get("company", "")
+        location = job.get("location", "")
+        match_percentage = job.get("match_percentage", 0)
+        explanation = job.get("explanation", "Matched to your profile.")
+        apply_url = job.get("apply_url") or job.get("redirect_url") or "#"
+
+        plain_lines.extend([
+            f"{title} - {company} - {location}",
+            f"Match: {match_percentage}%",
+            f"Why: {explanation}",
+            f"Apply: {apply_url}",
+            "",
+        ])
+
+        html_items.append(f"""
+            <div style="border:1px solid #f0d7c2;border-radius:14px;padding:16px;margin-bottom:14px;background:#fffaf6;">
+                <h3 style="margin:0 0 8px 0;color:#231f20;">{title}</h3>
+                <p style="margin:0 0 8px 0;color:#5c4f47;">{company} • {location}</p>
+                <p style="margin:0 0 8px 0;"><strong>Match:</strong> {match_percentage}%</p>
+                <p style="margin:0 0 12px 0;color:#5c4f47;"><strong>Why this fits:</strong> {explanation}</p>
+                <a href="{apply_url}" style="display:inline-block;background:#ff6200;color:#ffffff;text-decoration:none;padding:10px 16px;border-radius:10px;font-weight:700;">Apply Now</a>
+            </div>
+        """)
+
+    plain_lines.append("Open Just Apply to review more jobs, saved roles, and analytics.")
+    plain_body = "\n".join(plain_lines)
+
+    html_body = f"""
+        <html>
+            <body style="font-family:Arial,sans-serif;background:#f7f1eb;padding:24px;color:#231f20;">
+                <div style="max-width:700px;margin:0 auto;background:#ffffff;border-radius:20px;padding:28px;border:1px solid #f0d7c2;">
+                    <p style="color:#ff6200;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin:0 0 8px 0;">Just Apply</p>
+                    <h1 style="margin:0 0 16px 0;">New jobs matched to {target_text}</h1>
+                    <p style="margin:0 0 22px 0;color:#5c4f47;">Hi {user_name}, here are fresh live opportunities matched to your CV, career target, and previous activity.</p>
+                    {''.join(html_items)}
+                    <p style="margin-top:24px;color:#5c4f47;">Open Just Apply to review more jobs, track applications, and improve your match rate.</p>
+                </div>
+            </body>
+        </html>
+    """
+
+    return plain_body, html_body
+
+
+def should_send_alert_today(preferences: dict) -> bool:
+    if not preferences.get("alerts_enabled", False):
+        return False
+
+    frequency = preferences.get("frequency", "daily")
+    last_sent_at = preferences.get("last_sent_at")
+
+    if not last_sent_at:
+        return True
+
+    try:
+        last_dt = datetime.fromisoformat(str(last_sent_at).replace("Z", ""))
+    except Exception:
+        return True
+
+    now = datetime.now()
+
+    if frequency == "daily":
+        return (now - last_dt) >= timedelta(days=1)
+
+    if frequency == "weekly":
+        return (now - last_dt) >= timedelta(days=7)
+
+    return False
+
+
+def get_email_jobs_for_user(user_email: str, user_name: str) -> list[dict]:
+    preferences = get_email_preferences_by_user(user_email)
+    latest_cv = get_latest_cv_data(user_email)
+    career_target = get_user_career_target(user_email)
+    applications = get_job_applications_by_user(user_email)
+
+    applied_job_ids = {
+        str(app.get("external_job_id"))
+        for app in applications
+        if app.get("external_job_id")
+    }
+
+    results = search_live_jobs_adzuna(
+        skills=latest_cv.get("skills", []),
+        qualifications=latest_cv.get("qualifications", []),
+        where=preferences.get("preferred_location", ""),
+        page=1,
+        results_per_page=max(10, preferences.get("jobs_per_email", 5) * 2),
+        career_target=career_target,
+    )
+
+    filtered_jobs = []
+    for job in results.get("jobs", []):
+        external_job_id = str(job.get("external_job_id", ""))
+        if not external_job_id:
+            continue
+        if external_job_id in applied_job_ids:
+            continue
+        if has_job_been_emailed_to_user(user_email, external_job_id):
+            continue
+        filtered_jobs.append(job)
+
+    jobs_per_email = max(1, min(int(preferences.get("jobs_per_email", 5)), 10))
+    return filtered_jobs[:jobs_per_email]
+
+
+def send_job_alert_email_to_user(user_email: str, user_name: str):
+    if not can_send_email():
+        raise RuntimeError("Email is not configured.")
+
+    preferences = get_email_preferences_by_user(user_email)
+    if not should_send_alert_today(preferences):
+        return {
+            "sent": False,
+            "reason": "Not due yet",
+        }
+
+    career_target = get_user_career_target(user_email)
+    jobs = get_email_jobs_for_user(user_email, user_name)
+
+    if not jobs:
+        return {
+            "sent": False,
+            "reason": "No new jobs found",
+        }
+
+    subject = f"Just Apply: New jobs matched to {career_target or 'your profile'}"
+    plain_body, html_body = build_email_digest_content(user_name, career_target, jobs)
+
+    send_email_html(
+        to_email=user_email,
+        subject=subject,
+        html_body=html_body,
+        plain_body=plain_body,
+    )
+
+    for job in jobs:
+        record_emailed_job(
+            user_email=user_email,
+            external_job_id=str(job.get("external_job_id", "")),
+            title=job.get("title", ""),
+        )
+
+    update_email_last_sent_for_user(user_email)
+
+    return {
+        "sent": True,
+        "jobs_sent": len(jobs),
+        "subject": subject,
+    }
+
+
+def run_scheduled_email_alerts():
+    print("[EMAIL ALERTS] Scheduler tick started")
+
+    if not can_send_email():
+        print("[EMAIL ALERTS] Skipped - email not configured")
+        return
+
+    users = get_all_alert_enabled_users()
+    print(f"[EMAIL ALERTS] Users with alerts enabled: {len(users)}")
+
+    for user in users:
+        try:
+            result = send_job_alert_email_to_user(
+                user_email=user["email"],
+                user_name=user["name"],
+            )
+            print(f"[EMAIL ALERTS] {user['email']} -> {result}")
+        except Exception as e:
+            print(f"[EMAIL ALERTS] Failed for {user['email']}: {e}")
+
+# =========================================================
 # ROUTES
 # =========================================================
 @app.route("/health", methods=["GET"])
@@ -1858,6 +2426,74 @@ def update_career_target():
         "career_target": target_role,
         "db_mode": DB_MODE,
     }), 200
+
+
+@app.route("/api/email-preferences", methods=["GET"])
+@jwt_required()
+def get_email_preferences():
+    user_email = get_jwt_identity()
+    preferences = get_email_preferences_by_user(user_email)
+    return jsonify({
+        "preferences": preferences,
+        "db_mode": DB_MODE,
+    }), 200
+
+
+@app.route("/api/email-preferences", methods=["POST"])
+@jwt_required()
+def update_email_preferences():
+    user_email = get_jwt_identity()
+    data = request.get_json(silent=True) or {}
+
+    alerts_enabled = bool(data.get("alerts_enabled", True))
+    frequency = str(data.get("frequency", "daily")).strip().lower()
+    preferred_location = str(data.get("preferred_location", "")).strip()
+    jobs_per_email = int(data.get("jobs_per_email", 5) or 5)
+
+    if frequency not in ALERT_FREQUENCIES:
+        return jsonify({"error": "Invalid frequency"}), 400
+
+    if jobs_per_email < 1 or jobs_per_email > 10:
+        return jsonify({"error": "jobs_per_email must be between 1 and 10"}), 400
+
+    update_email_preferences_for_user(
+        user_email=user_email,
+        alerts_enabled=alerts_enabled,
+        frequency=frequency,
+        preferred_location=preferred_location,
+        jobs_per_email=jobs_per_email,
+    )
+
+    preferences = get_email_preferences_by_user(user_email)
+
+    return jsonify({
+        "message": "Email preferences updated",
+        "preferences": preferences,
+        "db_mode": DB_MODE,
+    }), 200
+
+
+@app.route("/api/test-send-job-alert", methods=["POST"])
+@jwt_required()
+def test_send_job_alert():
+    user_email = get_jwt_identity()
+    user = get_user_by_email(user_email)
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    try:
+        result = send_job_alert_email_to_user(
+            user_email=user["email"],
+            user_name=user["name"],
+        )
+        return jsonify({
+            "message": "Job alert test executed",
+            "result": result,
+            "db_mode": DB_MODE,
+        }), 200
+    except Exception as e:
+        return jsonify({"error": f"Could not send email alert: {str(e)}"}), 500
 
 
 @app.route("/api/upload-cv", methods=["POST"])
@@ -2059,12 +2695,10 @@ def update_application_status():
     application_id = data.get("application_id")
     status = str(data.get("status", "")).strip()
 
-    allowed_statuses = {"Applied", "Interviewing", "Rejected", "Offer"}
-
     if not application_id:
         return jsonify({"error": "application_id is required"}), 400
 
-    if status not in allowed_statuses:
+    if status not in ALLOWED_APPLICATION_STATUSES:
         return jsonify({"error": "Invalid status"}), 400
 
     update_job_application_status_for_user(user_email, int(application_id), status)
@@ -2112,6 +2746,7 @@ def profile_data():
     uploaded_cvs = get_uploaded_cvs_by_user(user_email)
     applications = get_job_applications_by_user(user_email)
     career_target = get_user_career_target(user_email)
+    email_preferences = get_email_preferences_by_user(user_email)
 
     profile_bits = build_profile_analytics(
         saved_jobs=saved_jobs,
@@ -2147,9 +2782,34 @@ def profile_data():
         "career_target": career_target,
         "job_readiness": readiness,
         "cv_tips": cv_tips,
+        "email_preferences": email_preferences,
         "db_mode": DB_MODE,
     }), 200
 
+# =========================================================
+# SCHEDULER
+# =========================================================
+scheduler = BackgroundScheduler()
+
+
+def start_scheduler():
+    if not EMAIL_ALERTS_ENABLED:
+        print("[EMAIL ALERTS] Scheduler disabled by env")
+        return
+
+    if scheduler.get_jobs():
+        return
+
+    scheduler.add_job(
+        func=run_scheduled_email_alerts,
+        trigger="cron",
+        hour=EMAIL_ALERTS_HOUR,
+        minute=EMAIL_ALERTS_MINUTE,
+        id="daily_job_alerts",
+        replace_existing=True,
+    )
+    scheduler.start()
+    print(f"[EMAIL ALERTS] Scheduler started for {EMAIL_ALERTS_HOUR:02d}:{EMAIL_ALERTS_MINUTE:02d}")
 
 # =========================================================
 # RUN
@@ -2162,8 +2822,11 @@ if __name__ == "__main__":
     print("ADZUNA COUNTRY =", ADZUNA_COUNTRY)
     print("ADZUNA APP ID FOUND =", bool(ADZUNA_APP_ID))
     print("ADZUNA APP KEY FOUND =", bool(ADZUNA_APP_KEY))
+    print("EMAIL ADDRESS FOUND =", bool(EMAIL_ADDRESS))
+    print("EMAIL APP PASSWORD FOUND =", bool(EMAIL_APP_PASSWORD))
 
     probe_db_mode()
     init_db()
+    start_scheduler()
 
     app.run(host="0.0.0.0", port=5000, debug=True)

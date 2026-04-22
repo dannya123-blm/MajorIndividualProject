@@ -284,6 +284,266 @@
     grid-template-columns: 1fr;
   }
 }
+.db-mode-banner {
+  margin-bottom: 20px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  border: 1px solid #f0cba8;
+  background: #fff4ea;
+  color: #8a5a35;
+  font-weight: 700;
+}
+
+.dashboard-control-strip {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+.dashboard-tabs {
+  display: flex;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid #f1d7c1;
+  border-radius: 18px;
+  padding: 8px;
+}
+
+.tab-btn {
+  min-height: 42px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #6b5e53;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tab-btn.active {
+  background: linear-gradient(135deg, #ff6200 0%, #ff8a3a 100%);
+  color: white;
+}
+
+.accessibility-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.toggle-btn {
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid #f1d7c1;
+  background: #fff;
+  color: #4b3f35;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.toggle-btn.active {
+  background: #ffe9d8;
+}
+
+.home-insight-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 26px;
+}
+
+.career-role {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #2b211c;
+  margin-bottom: 12px;
+}
+
+.job-top-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.job-actions-footer {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.match-breakdown {
+  margin-top: 16px;
+}
+
+.match-breakdown-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.breakdown-col {
+  background: #fffaf5;
+  border: 1px solid #f1ded0;
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.breakdown-heading {
+  font-weight: 800;
+  margin-bottom: 8px;
+  color: #2b211c;
+}
+
+.breakdown-row {
+  font-size: 0.92rem;
+  margin-bottom: 6px;
+}
+
+.breakdown-row.positive {
+  color: #1f7a39;
+}
+
+.breakdown-row.negative {
+  color: #b64a22;
+}
+
+.breakdown-row.neutral {
+  color: #6f6258;
+}
+
+.chance-high {
+  background: #e8fff0;
+  color: #157347;
+}
+
+.chance-medium {
+  background: #fff4df;
+  color: #a86500;
+}
+
+.chance-low {
+  background: #fff0f0;
+  color: #b42318;
+}
+
+.insights-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.insights-card.large {
+  min-height: 220px;
+}
+
+.compact-job-item .job-tags-block,
+.compact-job-item .match-breakdown {
+  margin-top: 12px;
+}
+
+.high-contrast-mode {
+  filter: contrast(1.08) saturate(1.06);
+}
+
+.readiness-score-circle {
+  width: 84px;
+  height: 84px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ff6200 0%, #ff8a3a 100%);
+  color: white;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  margin-bottom: 14px;
+}
+
+.readiness-score-circle.small {
+  width: 70px;
+  height: 70px;
+  font-size: 1.15rem;
+}
+
+.career-target-select {
+  min-height: 44px;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #f1d7c1;
+  padding: 0 12px;
+  background: white;
+  margin-bottom: 12px;
+}
+
+.compare-panel {
+  margin-bottom: 24px;
+  padding: 18px;
+  border: 1px solid #f1ded0;
+  border-radius: 18px;
+  background: #fffaf6;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.compare-card {
+  border: 1px solid #f1ded0;
+  border-radius: 16px;
+  padding: 16px;
+  background: white;
+}
+
+.compare-stat {
+  margin: 8px 0;
+  font-weight: 700;
+  color: #3c2f28;
+}
+
+.selected-compare {
+  background: #ffe9d8;
+}
+
+.application-notes-block {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.notes-label {
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #3b2e27;
+}
+
+.application-notes-textarea {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  border: 1px solid #f1d7c1;
+  border-radius: 12px;
+  padding: 12px;
+  font: inherit;
+  background: #fff;
+}
+
+@media (max-width: 1100px) {
+  .home-insight-grid,
+  .insights-layout,
+  .match-breakdown-grid,
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
+}
 
 .btn-apply:hover {
   background: linear-gradient(135deg, #e45700 0%, #ff7a21 100%);

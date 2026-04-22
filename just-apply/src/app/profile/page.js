@@ -23,6 +23,15 @@ export default function ProfilePage() {
   const [updatingAppId, setUpdatingAppId] = useState(null);
   const [savingNotesId, setSavingNotesId] = useState(null);
   const [notesMap, setNotesMap] = useState({});
+  const [savingPreferences, setSavingPreferences] = useState(false);
+  const [sendingTestEmail, setSendingTestEmail] = useState(false);
+
+  const [emailPreferences, setEmailPreferences] = useState({
+    alerts_enabled: true,
+    frequency: "daily",
+    preferred_location: "",
+    jobs_per_email: 5,
+  });
 
   const fetchProfileData = async () => {
     try {
@@ -44,6 +53,15 @@ export default function ProfilePage() {
         initialNotes[app.id] = app.notes || "";
       });
       setNotesMap(initialNotes);
+
+      setEmailPreferences(
+        data.email_preferences || {
+          alerts_enabled: true,
+          frequency: "daily",
+          preferred_location: "",
+          jobs_per_email: 5,
+        }
+      );
     } catch (err) {
       console.error(err);
     } finally {
@@ -93,7 +111,7 @@ export default function ProfilePage() {
         return;
       }
 
-      fetchProfileData();
+      await fetchProfileData();
     } catch (err) {
       console.error(err);
       alert("Could not connect to backend.");
@@ -124,12 +142,79 @@ export default function ProfilePage() {
         return;
       }
 
-      fetchProfileData();
+      await fetchProfileData();
     } catch (err) {
       console.error(err);
       alert("Could not connect to backend.");
     } finally {
       setSavingNotesId(null);
+    }
+  };
+
+  const saveEmailPreferences = async () => {
+    try {
+      setSavingPreferences(true);
+
+      const res = await fetch(`${API_BASE_URL}/api/email-preferences`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          alerts_enabled: emailPreferences.alerts_enabled,
+          frequency: emailPreferences.frequency,
+          preferred_location: emailPreferences.preferred_location,
+          jobs_per_email: Number(emailPreferences.jobs_per_email),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Could not save email preferences.");
+        return;
+      }
+
+      setEmailPreferences(data.preferences || emailPreferences);
+      alert("Email preferences updated.");
+    } catch (err) {
+      console.error(err);
+      alert("Could not connect to backend.");
+    } finally {
+      setSavingPreferences(false);
+    }
+  };
+
+  const sendTestJobAlert = async () => {
+    try {
+      setSendingTestEmail(true);
+
+      const res = await fetch(`${API_BASE_URL}/api/test-send-job-alert`, {
+        method: "POST",
+        headers: { ...getAuthHeaders() },
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Could not send job alert email.");
+        return;
+      }
+
+      const result = data.result || {};
+      if (result.sent) {
+        alert(`Test email sent successfully with ${result.jobs_sent || 0} job(s).`);
+      } else {
+        alert(`Email not sent: ${result.reason || "No new jobs found."}`);
+      }
+
+      await fetchProfileData();
+    } catch (err) {
+      console.error(err);
+      alert("Could not connect to backend.");
+    } finally {
+      setSendingTestEmail(false);
     }
   };
 
@@ -224,7 +309,7 @@ export default function ProfilePage() {
             <h1 className="page-title">Profile & Career Insights</h1>
             <p className="page-subtitle">
               View your saved jobs, uploaded CV history, extracted skills,
-              applications, and analytics that explain where you fit best in the live job market.
+              applications, analytics, and automatic job alert settings.
             </p>
           </div>
         </section>
@@ -371,6 +456,97 @@ export default function ProfilePage() {
             <div className="jobs-card">
               <div className="jobs-header">
                 <div>
+                  <p className="section-kicker">Automatic alerts</p>
+                  <h4>Email Job Alert Settings</h4>
+                </div>
+              </div>
+
+              <div className="filter-controls">
+                <div className="filter-group">
+                  <label>Alerts Enabled</label>
+                  <select
+                    value={emailPreferences.alerts_enabled ? "yes" : "no"}
+                    onChange={(e) =>
+                      setEmailPreferences((prev) => ({
+                        ...prev,
+                        alerts_enabled: e.target.value === "yes",
+                      }))
+                    }
+                  >
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Frequency</label>
+                  <select
+                    value={emailPreferences.frequency || "daily"}
+                    onChange={(e) =>
+                      setEmailPreferences((prev) => ({
+                        ...prev,
+                        frequency: e.target.value,
+                      }))
+                    }
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                  </select>
+                </div>
+
+                <div className="filter-group">
+                  <label>Jobs Per Email</label>
+                  <select
+                    value={emailPreferences.jobs_per_email || 5}
+                    onChange={(e) =>
+                      setEmailPreferences((prev) => ({
+                        ...prev,
+                        jobs_per_email: Number(e.target.value),
+                      }))
+                    }
+                  >
+                    <option value={3}>3</option>
+                    <option value={5}>5</option>
+                    <option value={7}>7</option>
+                    <option value={10}>10</option>
+                  </select>
+                </div>
+
+                <div className="filter-group filter-wide">
+                  <label>Preferred Location</label>
+                  <input
+                    className="career-target-select"
+                    type="text"
+                    value={emailPreferences.preferred_location || ""}
+                    onChange={(e) =>
+                      setEmailPreferences((prev) => ({
+                        ...prev,
+                        preferred_location: e.target.value,
+                      }))
+                    }
+                    placeholder="e.g. New York, Remote, California"
+                  />
+                </div>
+              </div>
+
+              <div className="job-actions-footer">
+                <button className="btn-primary" onClick={saveEmailPreferences} disabled={savingPreferences}>
+                  {savingPreferences ? "Saving..." : "Save Email Preferences"}
+                </button>
+
+                <button className="btn-primary btn-apply" onClick={sendTestJobAlert} disabled={sendingTestEmail}>
+                  {sendingTestEmail ? "Sending..." : "Send Test Job Alert"}
+                </button>
+              </div>
+
+              <p className="insight-text" style={{ marginTop: "12px" }}>
+                These settings control your automatic live job emails based on your CV, career target, and activity.
+              </p>
+            </div>
+
+            <div className="jobs-card">
+              <div className="jobs-header">
+                <div>
                   <p className="section-kicker">Career pipeline</p>
                   <h4>Application Journey</h4>
                 </div>
@@ -388,6 +564,34 @@ export default function ProfilePage() {
                       <div
                         className="mini-bar-fill alt"
                         style={{ width: `${Math.min(item.count * 20, 100)}%` }}
+                      />
+                    </div>
+                    <div className="mini-bar-value">{item.count}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="jobs-card">
+              <div className="jobs-header">
+                <div>
+                  <p className="section-kicker">Top missing skills</p>
+                  <h4>Skills to Improve</h4>
+                </div>
+              </div>
+
+              <div className="mini-bars">
+                {topMissingSkills.length === 0 && (
+                  <p className="insight-text">No missing-skill data yet.</p>
+                )}
+
+                {topMissingSkills.map((item, idx) => (
+                  <div key={idx} className="mini-bar-row">
+                    <div className="mini-bar-label">{item.skill}</div>
+                    <div className="mini-bar-track">
+                      <div
+                        className="mini-bar-fill"
+                        style={{ width: `${Math.min(item.count * 18, 100)}%` }}
                       />
                     </div>
                     <div className="mini-bar-value">{item.count}</div>
@@ -423,6 +627,41 @@ export default function ProfilePage() {
                     )}
                   </div>
                 ))}
+              </div>
+            </div>
+
+            <div className="jobs-card">
+              <div className="jobs-header">
+                <div>
+                  <p className="section-kicker">Extracted profile</p>
+                  <h4>All Skills & Qualifications</h4>
+                </div>
+              </div>
+
+              <div className="profile-tags-section">
+                <p className="profile-tag-title">Skills</p>
+                <div className="chips">
+                  {extractedSkills.length === 0 && (
+                    <div className="chip-empty">No extracted skills yet</div>
+                  )}
+                  {extractedSkills.map((skill, idx) => (
+                    <span key={idx} className="chip chip-orange">
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+
+                <p className="profile-tag-title">Qualifications</p>
+                <div className="chips">
+                  {extractedQualifications.length === 0 && (
+                    <div className="chip-empty">No extracted qualifications yet</div>
+                  )}
+                  {extractedQualifications.map((qual, idx) => (
+                    <span key={idx} className="chip chip-blue">
+                      {qual}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
 
