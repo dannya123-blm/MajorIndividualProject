@@ -22,6 +22,7 @@ from nltk.tokenize import word_tokenize
 
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
+from ai_coach import ai_coach_bp
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import (
     JWTManager,
@@ -96,6 +97,7 @@ else:
 # FLASK APP
 # =========================================================
 app = Flask(__name__)
+app.register_blueprint(ai_coach_bp)
 app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-change-me")
 app.config["JWT_TOKEN_LOCATION"] = ["headers"]
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=1)
