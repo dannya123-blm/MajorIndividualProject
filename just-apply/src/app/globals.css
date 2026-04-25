@@ -17,6 +17,343 @@
   --blue-text: #1d67d9;
   --neutral-soft: #f4eee8;
 }
+/* CLEAN CV UPLOAD CARD */
+.upload-card {
+  background: #ffffff;
+  border: 1px solid #f1d7c1;
+  border-radius: 26px;
+  padding: 26px;
+  box-shadow: 0 18px 48px rgba(61, 38, 22, 0.08);
+}
+
+.dropzone {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  cursor: pointer;
+}
+
+.dropzone input {
+  display: none;
+}
+
+.drop-inner {
+  min-height: 230px;
+  border: 2px dashed #ffc49d;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #fffaf6 0%, #ffffff 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 28px;
+  transition: all 0.2s ease;
+}
+
+.drop-inner:hover {
+  border-color: #ff6200;
+  background: #fff4ec;
+  transform: translateY(-2px);
+}
+
+.cloud {
+  width: 62px;
+  height: 62px;
+  border-radius: 50%;
+  background: #ffe7d5;
+  color: #ff6200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.7rem;
+  box-shadow: 0 10px 26px rgba(255, 98, 0, 0.15);
+}
+
+.drop-text {
+  font-size: 1.25rem;
+  font-weight: 900;
+  color: #261f1a;
+}
+
+.drop-sub {
+  font-size: 0.95rem;
+  color: #7b6a5f;
+}
+
+.upload-actions {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.selected-file {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #fff4ec;
+  color: #5f4a3c;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.status {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: #fff0e6;
+  color: #7a3500;
+  font-weight: 700;
+}
+
+.azure {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.azure-label {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: #f5eee8;
+  color: #6b5a50;
+  font-weight: 800;
+  font-size: 0.85rem;
+}
+
+.azure a {
+  color: #ff6200;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+/* AI COACH */
+.ai-coach-float {
+  position: fixed;
+  right: 26px;
+  bottom: 26px;
+  z-index: 999;
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 22px;
+  background: linear-gradient(135deg, #ff6200 0%, #ff8a3a 100%);
+  color: #fff;
+  font-weight: 900;
+  font-size: 0.95rem;
+  box-shadow: 0 18px 40px rgba(255, 98, 0, 0.28);
+  cursor: pointer;
+}
+
+.ai-coach-panel {
+  position: fixed;
+  right: 26px;
+  bottom: 26px;
+  width: 410px;
+  max-width: calc(100vw - 32px);
+  max-height: 84vh;
+  z-index: 999;
+  border-radius: 24px;
+  border: 1px solid #f1d7c1;
+  background: #fffaf6;
+  box-shadow: 0 24px 70px rgba(61, 38, 22, 0.22);
+  padding: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-coach-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.ai-coach-kicker {
+  margin: 0 0 4px 0;
+  color: #ff6200;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+
+.ai-coach-header h3 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #201b18;
+}
+
+.ai-coach-close {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  background: #ffe7d5;
+  color: #8a3b00;
+  font-size: 1.35rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ai-coach-subtitle {
+  margin: 0 0 12px 0;
+  color: #6b5e53;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.ai-coach-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.ai-coach-actions button {
+  border: 1px solid #f1d7c1;
+  background: #ffffff;
+  color: #5d4b40;
+  border-radius: 999px;
+  padding: 8px 11px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.ai-coach-actions button.active {
+  background: #ff6200;
+  border-color: #ff6200;
+  color: #ffffff;
+}
+
+.ai-coach-input-area {
+  border: 1px solid #f1d7c1;
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.ai-coach-input-area textarea {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  border: 1px solid #f1d7c1;
+  border-radius: 14px;
+  padding: 12px;
+  font: inherit;
+  color: #201b18;
+  background: #fffaf6;
+  outline: none;
+  margin-bottom: 10px;
+}
+
+.ai-coach-input-area button {
+  width: 100%;
+  border: 0;
+  border-radius: 14px;
+  min-height: 44px;
+  background: linear-gradient(135deg, #ff6200 0%, #ff8a3a 100%);
+  color: white;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.ai-coach-input-area button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ai-coach-help {
+  margin: 0 0 12px 0;
+  color: #6b5e53;
+  font-size: 0.9rem;
+}
+
+.ai-coach-output {
+  flex: 1;
+  min-height: 180px;
+  overflow-y: auto;
+  border-radius: 18px;
+  border: 1px solid #f1d7c1;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.ai-coach-empty,
+.ai-coach-loading {
+  color: #7a6a5f;
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.ai-section {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f3e2d7;
+}
+
+.ai-section:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+
+.ai-section h4 {
+  margin: 0 0 8px 0;
+  color: #ff6200;
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.ai-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.ai-section li {
+  margin-bottom: 7px;
+  color: #2c2520;
+  line-height: 1.45;
+  font-size: 0.92rem;
+}
+
+.ai-coach-response p {
+  margin: 0 0 10px 0;
+  color: #2c2520;
+  line-height: 1.45;
+}
+
+@media (max-width: 700px) {
+  .ai-coach-panel {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    width: auto;
+  }
+
+  .ai-coach-float {
+    right: 18px;
+    bottom: 18px;
+  }
+
+  .upload-actions {
+    align-items: stretch;
+  }
+
+  .upload-actions .btn-primary {
+    width: 100%;
+  }
+}
 .ai-coach-float {
   position: fixed;
   right: 26px;
