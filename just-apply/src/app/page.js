@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import justwork from "../images/justwork.png";
+import AICoachWidget from "./components/AICoachWidget";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:5000";
@@ -1333,7 +1334,18 @@ export default function HomePage() {
               </div>
             </div>
           </section>
+          
         )}
+        <AICoachWidget
+          skills={skills}
+          qualifications={qualifications}
+          cvPreview={preview}
+          selectedJob={
+            openJobId
+              ? jobs.find((job) => String(job.job_id) === String(openJobId))
+              : null
+          }
+        />
       </main>
     </div>
   );
