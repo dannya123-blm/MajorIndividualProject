@@ -86,7 +86,8 @@ def keyword_match(text: str, keywords: list[str]) -> list[str]:
             found.append(kw)
 
     # remove duplicates
-    return list(dict.fromkeys(found))
+    seen = set()
+    unique = []
 
     for item in found:
         key = item.lower()
