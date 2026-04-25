@@ -10,7 +10,6 @@ import requests
 import nltk
 import pyodbc
 import pandas as pd
-import pdfplumber
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -1531,30 +1530,12 @@ def upload_cv_to_azure(file_path: str, blob_name: str) -> Optional[str]:
 
 
 def extract_text_from_pdf(path: str) -> str:
-    # First try pdfplumber because it handles messy CV templates better
-    try:
-        text_parts = []
-        with pdfplumber.open(path) as pdf:
-            for page in pdf.pages:
-                text_parts.append(page.extract_text() or "")
-        text = "\n".join(text_parts)
-
-        if text.strip():
-            return clean_extracted_text(text)
-    except Exception as e:
-        print("pdfplumber parse error:", e)
-
-    # Fallback to PyPDF2
     try:
         reader = PdfReader(path)
-        raw_text = "\n".join((page.extract_text() or "") for page in reader.pages)
-
-        if raw_text.strip():
-            return clean_extracted_text(raw_text)
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
     except Exception as e:
-        print("PyPDF2 parse error:", e)
-
-    return ""
+        print("PDF parse error:", e)
+        return ""
 
 
 def extract_text_from_docx(path: str) -> str:
