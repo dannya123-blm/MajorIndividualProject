@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 import smtplib
+from nlp import extract_skills, extract_qualifications, clean_extracted_text
 from datetime import datetime, timedelta
 from typing import Optional, Any
 
@@ -2524,9 +2525,10 @@ def upload_and_parse_cv():
     else:
         text = extract_text_generic(save_path)
 
+    text = clean_extracted_text(text)
     skills = extract_skills(text)
     qualifications = extract_qualifications(text)
-    preview = text[:600] if text else ""
+    preview = text[:1200] if text else ""
 
     blob_url = upload_cv_to_azure(save_path, filename)
 
