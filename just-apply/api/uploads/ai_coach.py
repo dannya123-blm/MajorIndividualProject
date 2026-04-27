@@ -1,4 +1,5 @@
 import os
+import time
 from flask import Blueprint, request, jsonify
 from dotenv import load_dotenv
 from google import genai
@@ -22,16 +23,67 @@ def clean_response(text: str) -> str:
     return text.strip()
 
 
-def generate_ai_response(prompt: str) -> str:
+def fallback_response() -> str:
+    return """
+### Summary
+AI demand is currently high, so Just Appy could not generate a live response right now.
+
+### Key Advice
+- Try again in a few seconds.
+- Keep your CV focused on measurable achievements.
+- Match your CV keywords to the job description.
+
+### Improvements
+- Add clear technical skills such as Python, SQL, React, or Azure.
+- Include project outcomes, not just tasks.
+- Use short bullet points with impact.
+
+### Action Steps
+- Retry the AI Coach shortly.
+- Upload your latest CV before asking for feedback.
+- Select a target role so advice becomes more personalised.
+""".strip()
+
+
+def is_temporary_ai_error(error: Exception) -> bool:
+    error_text = str(error).lower()
+    return (
+        "503" in error_text
+        or "unavailable" in error_text
+        or "high demand" in error_text
+        or "temporarily" in error_text
+        or "rate limit" in error_text
+        or "quota" in error_text
+    )
+
+
+def generate_ai_response(prompt: str, retries: int = 3) -> str:
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is missing from .env")
 
-    response = client.models.generate_content(
-        model=AI_COACH_MODEL,
-        contents=prompt,
-    )
+    last_error = None
 
-    return clean_response(response.text)
+    for attempt in range(retries):
+        try:
+            response = client.models.generate_content(
+                model=AI_COACH_MODEL,
+                contents=prompt,
+            )
+
+            return clean_response(response.text)
+
+        except Exception as e:
+            last_error = e
+
+            if is_temporary_ai_error(e):
+                print(f"[AI COACH] Temporary Gemini error. Retry {attempt + 1}/{retries}: {e}")
+                time.sleep(2 ** attempt)
+                continue
+
+            raise e
+
+    print("[AI COACH] Gemini unavailable after retries:", last_error)
+    return fallback_response()
 
 
 def build_context(data):
@@ -104,7 +156,7 @@ Selected job:
         return jsonify({"reply": reply}), 200
     except Exception as e:
         print("AI Coach chat error:", e)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"reply": fallback_response(), "warning": str(e)}), 200
 
 
 @ai_coach_bp.route("/api/ai-coach/cv-review", methods=["POST"])
@@ -165,7 +217,7 @@ Qualifications:
         return jsonify({"review": review}), 200
     except Exception as e:
         print("AI Coach CV review error:", e)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"review": fallback_response(), "warning": str(e)}), 200
 
 
 @ai_coach_bp.route("/api/ai-coach/cover-letter", methods=["POST"])
@@ -212,7 +264,7 @@ Job description:
         return jsonify({"cover_letter": cover_letter}), 200
     except Exception as e:
         print("AI Coach cover letter error:", e)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"cover_letter": fallback_response(), "warning": str(e)}), 200
 
 
 @ai_coach_bp.route("/api/ai-coach/generate-cv", methods=["POST"])
@@ -257,4 +309,4 @@ Details:
         return jsonify({"cv": cv}), 200
     except Exception as e:
         print("AI Coach generate CV error:", e)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"cv": fallback_response(), "warning": str(e)}), 200
